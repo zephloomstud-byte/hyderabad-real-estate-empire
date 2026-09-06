@@ -13,6 +13,7 @@ import {
   dutyRate, salaryIndex, farFor, estimateProject, maxBuildableSqFt, assetValue,
   portfolioNoiAnnual, availableLenders, offeredRate, creditDecision, landValue,
   abandonProject, remainingCommitments, freeSqYd,
+  repayLoan, quotePrepayment, remainingTenure, interestIfHeld,
 } from '../sim/engine.js';
 import { materialPrice, wage } from '../sim/market.js';
 
@@ -384,14 +385,23 @@ views.finance = () => {
     </div>
 
     ${S.loans.length ? `<div class="card"><h3>Borrowings</h3><table>
-      <tr><th>Lender</th><th class="n">Drawn</th><th class="n">Outstanding</th><th class="n">Rate</th><th class="n">Instalment</th><th>Status</th></tr>
-      ${S.loans.map((l) => `<tr>
-        <td>${esc(l.lender)}${l.secret ? '<div class="small muted">Against your mother’s gold.</div>' : ''}</td>
+      <tr><th>Lender</th><th class="n">Drawn</th><th class="n">Outstanding</th><th class="n">Rate</th><th class="n">Instalment</th><th class="n">Closes in</th><th class="n">Interest still to pay</th><th>Status</th><th></th></tr>
+      ${S.loans.map((l) => {
+        const left = remainingTenure(l);
+        const owed = interestIfHeld(l);
+        return `<tr>
+        <td>${esc(l.lender)}${l.secret ? '<div class="small muted">Against your mother’s gold.</div>' : ''}${l.prepaid ? `<div class="small muted">${money(l.prepaid)} prepaid</div>` : ''}</td>
         <td class="n">${money(l.principal)}</td><td class="n">${money(l.outstanding)}</td>
         <td class="n ${l.rate > 0.2 ? 'neg' : ''}">${pct(l.rate, 2)}</td><td class="n">${money(l.emi)}</td>
+        <td class="n">${Number.isFinite(left) ? left + ' mo' : 'never'}</td>
+        <td class="n ${owed > l.outstanding ? 'neg' : ''}">${Number.isFinite(owed) ? money(owed) : '—'}</td>
         <td>${l.missed >= 3 ? '<span class="pill warn">In default</span>' : l.missed > 0 ? '<span class="pill warn">Overdue</span>' : '<span class="pill good">Regular</span>'}</td>
-      </tr>`).join('')}
-    </table></div>` : ''}
+        <td class="n"><button class="btn sm" data-repay="${l.id}" ${S.cash < 1000 ? 'disabled' : ''}>Repay</button></td>
+      </tr>`;
+      }).join('')}
+    </table>
+    <div class="small muted" style="margin-top:8px">Idle cash earns nothing while these run against it, so clearing debt early is often the best use of surplus money. It is also the money you will not have when the next site needs paying for, and banks do not lend it back on demand.</div>
+    </div>` : ''}
 
     <div class="card"><h3>Raise money</h3>
       <div class="grid g2">
@@ -593,6 +603,7 @@ function bindView() {
     };
   });
   v.querySelectorAll('[data-loan]').forEach((b) => { b.onclick = () => showLoan(b.dataset.loan); });
+  v.querySelectorAll('[data-repay]').forEach((b) => { b.onclick = () => showRepay(b.dataset.repay); });
   v.querySelectorAll('[data-hire]').forEach((b) => {
     b.onclick = () => { const p = hire(S, b.dataset.hire); say(`${p.name} hired at ${money(p.salary)} a month.`); refresh(S); saveGame(S); render(); };
   });
@@ -900,6 +911,79 @@ function showLoan(lenderId) {
         <div class="small muted" style="margin-top:6px">${(d?.reasons || ['The proposal does not meet lending norms.']).map(esc).join(' ')}</div></div>`;
       refresh(S); saveGame(S);
       if (r.ok) setTimeout(() => { closeModal(); render(); }, 2600);
+    };
+  });
+}
+
+function showRepay(loanId) {
+  const l = S.loans.find((x) => x.id === loanId);
+  if (!l) return;
+  // The most principal the player could clear if they spent every rupee they have.
+  const fullQuote = quotePrepayment(l, l.outstanding, S.month);
+  const loading = 1 + fullQuote.penalty / Math.max(1, l.outstanding);
+  const maxPrincipal = Math.max(0, Math.min(l.outstanding, Math.floor(S.cash / loading)));
+
+  const draw = () => {
+    const amt = Number($('#ramt').value) || 0;
+    const q = quotePrepayment(l, amt, S.month);
+    const afford = S.cash >= q.cashRequired;
+    $('#rquote').innerHTML = `
+      ${row('Principal repaid', money(q.principal))}
+      ${row(q.minInterest > 0 ? 'Charges and minimum interest' : 'Foreclosure charge',
+        money(q.penalty) + (q.penaltyRate ? ` (${pct(q.penaltyRate, 0)})` : ''))}
+      ${row('Cash required now', money(q.cashRequired), 'total')}
+      <div style="height:8px"></div>
+      ${row('Outstanding afterwards', money(q.newOutstanding))}
+      ${row('Facility closes in', q.full ? 'Closed outright'
+        : (Number.isFinite(q.tenureAfter) ? `${q.tenureAfter} months, down from ${q.tenureBefore}` : '—'))}
+      ${row('Interest you avoid', Number.isFinite(q.interestSaved) ? money(q.interestSaved) : '—')}
+      ${row('Net gain over the life of the loan', Number.isFinite(q.netBenefit) ? money(q.netBenefit, { sign: true }) : '—', 'total')}
+      ${row('Cash left afterwards', money(S.cash - q.cashRequired), afford ? '' : 'total')}
+      ${afford ? '' : '<div class="small neg" style="padding:6px 0">You cannot cover this. Reduce the amount.</div>'}
+      ${q.full && (l.collateral || []).length ? '<div class="small pos" style="padding:6px 0">Closing this facility releases the security pledged against it.</div>' : ''}`;
+    $('#rgo').disabled = !afford || q.principal < 1000;
+  };
+
+  openModal(`<div class="modal" style="max-width:580px">
+    <div class="head"><div class="cat">Prepayment · ${dateLabel(S.month)}</div><h2>${esc(l.lender)}</h2></div>
+    <div class="body">
+      ${row('Outstanding', money(l.outstanding))}
+      ${row('Rate', pct(l.rate, 2))}
+      ${row('Monthly instalment', money(l.emi))}
+      ${row('Cash in hand', money(S.cash))}
+      <label class="stack" style="gap:4px;margin-top:14px"><span class="small muted">Principal to repay</span>
+        <input id="ramt" type="number" value="${Math.max(1000, Math.min(maxPrincipal, Math.round(l.outstanding)))}" min="1000" max="${Math.round(l.outstanding)}" step="10000"></label>
+      <div class="inline" style="margin-top:8px">
+        <button class="btn sm ghost" data-quick="0.25">A quarter</button>
+        <button class="btn sm ghost" data-quick="0.5">Half</button>
+        <button class="btn sm ghost" data-quick="1">Everything outstanding</button>
+        <button class="btn sm ghost" data-quick="max">All I can spare</button>
+      </div>
+      <div class="card tight" style="margin-top:14px" id="rquote"></div>
+    </div>
+    <div class="foot"><div class="inline">
+      <button class="btn" id="rgo">Repay</button>
+      <button class="btn ghost" id="rclose">Leave it running</button>
+    </div></div>
+  </div>`, (rootEl) => {
+    const input = $('#ramt', rootEl);
+    input.oninput = draw;
+    rootEl.querySelectorAll('[data-quick]').forEach((b) => {
+      b.onclick = () => {
+        const k = b.dataset.quick;
+        input.value = Math.round(k === 'max' ? Math.min(l.outstanding, maxPrincipal) : l.outstanding * Number(k));
+        draw();
+      };
+    });
+    draw();
+    $('#rclose', rootEl).onclick = () => { closeModal(); render(); };
+    $('#rgo', rootEl).onclick = () => {
+      const r = repayLoan(S, loanId, Number(input.value));
+      if (!r.ok) return say(r.msg);
+      say(r.quote.full
+        ? `${l.lender} closed. ${money(r.quote.interestSaved)} of interest avoided.${r.released.length ? ` Security released: ${r.released.join(', ')}.` : ''}`
+        : `Prepaid ${money(r.quote.principal)}. Around ${money(r.quote.interestSaved)} of interest avoided.`);
+      refresh(S); saveGame(S); closeModal(); render();
     };
   });
 }

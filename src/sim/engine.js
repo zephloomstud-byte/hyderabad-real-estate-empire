@@ -13,7 +13,8 @@ import {
   macroAt, landRate, rentRate, salePrice, capRate, costIndex, dutyRate, salaryIndex,
   makeLandOffer, makeDevAgreement, makeAssetOffer, runDueDiligence, marketView, farFor,
 } from './market.js';
-import { creditDecision, takeLoan, serviceDebt, totalDebt, availableLenders, offeredRate, distressedLoans } from './finance.js';
+import { creditDecision, takeLoan, serviceDebt, totalDebt, availableLenders, offeredRate, distressedLoans,
+  quotePrepayment, prepaymentPenaltyRate, remainingTenure, interestIfHeld } from './finance.js';
 import { startProject, tickProject, tickPresales, tickInventory, estimateProject, maxBuildableSqFt,
   remainingCommitments, abandonProject, fundingSchedule, freeSqYd, landConsumedBy } from './build.js';
 import { tickAsset, assetValue, portfolioNoiAnnual, propertyTax } from './assets.js';
@@ -221,6 +222,74 @@ export function applyForLoan(s, lenderId, amount, collateralIds) {
     body: `At ${(d.rate * 100).toFixed(2)} per cent for ${d.tenure} months. ${d.reasons.join(' ')}`,
   });
   return { ok: true, decision: d };
+}
+
+/**
+ * Repay a loan early, in part or in full. Cash sitting idle earns nothing while a
+ * sixteen-per-cent facility runs against it, so clearing debt is often the best
+ * available use of surplus money — but it is also the money you will not have when
+ * the next site needs paying for, and banks do not lend it back on demand.
+ */
+export function repayLoan(s, loanId, amount) {
+  const loan = s.loans.find((l) => l.id === loanId);
+  if (!loan) return { ok: false, msg: 'That facility is already closed.' };
+  const q = quotePrepayment(loan, amount, s.month);
+  if (q.principal < 1000) return { ok: false, msg: 'Repay at least ₹1,000.' };
+  if (s.cash < q.cashRequired) {
+    return { ok: false, msg: `You need ${money(q.cashRequired)} — ${money(q.principal)} of principal plus ${money(q.penalty)} of charges — and you have ${money(s.cash)}.` };
+  }
+
+  s.cash -= q.cashRequired;
+  loan.outstanding -= q.principal;
+  loan.prepaid = (loan.prepaid || 0) + q.principal;
+
+  let released = [];
+  if (q.full || loan.outstanding < 1) {
+    s.loans = s.loans.filter((l) => l.id !== loanId);
+    // Release security, unless another facility is also charged on it.
+    for (const id of loan.collateral || []) {
+      const stillPledged = s.loans.some((l) => (l.collateral || []).includes(id));
+      if (stillPledged) continue;
+      const parcel = s.parcels.find((x) => x.id === id);
+      if (parcel) { parcel.pledged = false; released.push(parcel.label); }
+      const asset = s.assets.find((x) => x.id === id);
+      if (asset) { asset.pledged = false; released.push(asset.name); }
+    }
+    loan.missed = 0;
+  }
+
+  // Lenders remember who repaid them. So do private financiers, for different reasons.
+  if (loan.kind === 'private') s.relations.financiers = clamp(s.relations.financiers + (q.full ? 10 : 4), 0, 100);
+  else s.relations.banks = clamp(s.relations.banks + (q.full ? 9 : 3), 0, 100);
+  if (q.full) s.reputation = clamp(s.reputation + 1, 0, 100);
+
+  // The jewel loan is not an ordinary facility. Closing it puts the gold back.
+  if (q.full && loan.secret) {
+    s.flags.goldRedeemed = true;
+    s.relations.family = clamp(s.relations.family + 15, 0, 100);
+    s.stress = Math.max(0, s.stress - 6);
+    s.news.push({
+      m: s.month, tag: 'PERSONAL', head: 'Your mother’s gold is back in the locker',
+      body: 'You collected it from Andhra Bank on a Thursday afternoon and put it back where it had been, and she has still never been told it left. You have, at least, stopped being a man who pledged his mother’s jewellery.',
+    });
+  }
+
+  s.ledger.push({
+    m: s.month, type: q.full ? 'Loan closed' : 'Loan prepayment',
+    amount: -q.cashRequired,
+    note: `${loan.lender}${q.penalty > 0 ? ` (incl. ${money(q.penalty)} charges)` : ''}`,
+  });
+  s.news.push({
+    m: s.month, tag: 'FINANCE',
+    head: q.full ? `${loan.lender} facility closed` : `Prepaid ${money(q.principal)} to ${loan.lender}`,
+    body: q.full
+      ? `Repaid in full at a cost of ${money(q.cashRequired)}${q.penalty > 0 ? `, including ${money(q.penalty)} of foreclosure charges` : ''}. `
+        + `It saves roughly ${money(q.interestSaved)} of interest you would otherwise have paid over ${q.tenureBefore} months.`
+        + (released.length ? ` Security released: ${released.join(', ')}.` : '')
+      : `Outstanding down to ${money(loan.outstanding)}. On the same instalment the facility now closes in about `
+        + `${q.tenureAfter} months rather than ${q.tenureBefore}, saving around ${money(q.interestSaved)} of interest.`,
+  });
+  return { ok: true, quote: q, released };
 }
 
 export function sellParcel(s, parcelId, factor = 1) {
@@ -990,6 +1059,7 @@ function checkEnd(s) {
 
 export {
   abandonProject, remainingCommitments, fundingSchedule, freeSqYd, landConsumedBy,
+  quotePrepayment, prepaymentPenaltyRate, remainingTenure, interestIfHeld,
   marketView, landRate, rentRate, salePrice, capRate, costIndex, dutyRate, salaryIndex,
   farFor, estimateProject, maxBuildableSqFt, assetValue, portfolioNoiAnnual,
   balanceSheet, computeRatios, availableLenders, offeredRate, creditDecision, landValue,

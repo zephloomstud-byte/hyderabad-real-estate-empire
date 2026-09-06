@@ -129,3 +129,66 @@ export function totalDebt(s) {
 export function distressedLoans(s) {
   return s.loans.filter((l) => l.missed >= 3);
 }
+
+// ---------------------------------------------------------------- prepayment
+
+/**
+ * Foreclosure charge. Banks in this period levied 2% of the amount prepaid on
+ * developer loans — they had priced the loan on the assumption of holding it. The
+ * charge on floating-rate business loans eased through the 2010s but never vanished
+ * the way it did for individual home borrowers in 2012.
+ *
+ * Private financiers are different: Chalapathi wants his principal back and will not
+ * charge you to return it. He will, however, expect a minimum period of interest, so
+ * repaying him in the first few months buys you less than you would think.
+ */
+export function prepaymentPenaltyRate(loan, month) {
+  if (loan.kind === 'private') return 0;
+  if (loan.kind === 'nbfc') return month >= 264 ? 0.02 : 0.03;
+  return month >= 204 ? 0.01 : 0.02;
+}
+
+/** Months left before the loan closes on its current instalment. */
+export function remainingTenure(loan) {
+  const r = loan.rate / 12;
+  if (r <= 0) return Math.ceil(loan.outstanding / loan.emi);
+  // If the instalment does not even cover the interest, the loan never amortises.
+  if (loan.emi <= loan.outstanding * r) return Infinity;
+  return Math.ceil(-Math.log(1 - (r * loan.outstanding) / loan.emi) / Math.log(1 + r));
+}
+
+/** Total interest still to be paid if the loan simply runs its course. */
+export function interestIfHeld(loan) {
+  const n = remainingTenure(loan);
+  if (!Number.isFinite(n)) return Infinity;
+  return Math.max(0, loan.emi * n - loan.outstanding);
+}
+
+/**
+ * Quote a prepayment without committing to it, so the interface can show the player
+ * exactly what the money buys before they part with it.
+ */
+export function quotePrepayment(loan, amount, month) {
+  const principal = Math.max(0, Math.min(amount, loan.outstanding));
+  const penaltyRate = prepaymentPenaltyRate(loan, month);
+  // Private lenders take a minimum of six months' interest whatever you do.
+  const minInterest = loan.kind === 'private'
+    ? Math.max(0, (6 - (month - loan.taken)) * principal * (loan.rate / 12))
+    : 0;
+  const penalty = Math.round(principal * penaltyRate + minInterest);
+  const cashRequired = principal + penalty;
+  const full = principal >= loan.outstanding - 1;
+
+  const before = interestIfHeld(loan);
+  const after = full ? 0 : interestIfHeld({ ...loan, outstanding: loan.outstanding - principal });
+  const saved = Number.isFinite(before) && Number.isFinite(after) ? Math.round(before - after) : Infinity;
+
+  return {
+    principal, penalty, penaltyRate, minInterest, cashRequired, full,
+    interestSaved: saved,
+    netBenefit: Number.isFinite(saved) ? saved - penalty : Infinity,
+    tenureBefore: remainingTenure(loan),
+    tenureAfter: full ? 0 : remainingTenure({ ...loan, outstanding: loan.outstanding - principal }),
+    newOutstanding: loan.outstanding - principal,
+  };
+}
