@@ -575,10 +575,21 @@ function bindView() {
     b.onclick = () => {
       const p = S.projects.find((x) => x.id === b.dataset.abandon);
       if (!p) return;
-      if (!confirm(`Abandon ${p.name}? You have spent ${money(p.spent)} on it. You will recover part of that, any buyers who paid advances become creditors, and the market will hear about it.`)) return;
-      const r = abandonProject(S, b.dataset.abandon);
-      say(r.ok ? `Site sold on. Recovered ${money(r.recovered)}.` : r.msg);
-      refresh(S); saveGame(S); render();
+      confirmModal({
+        title: `Abandon ${p.name}?`,
+        body: `You have spent ${money(p.spent)} on this site. Selling it on part-built will recover roughly `
+          + `${money(p.spent * (p.stage === 'approval' ? 0.25 : 0.55))} — half-finished buildings fetch badly, because the buyer `
+          + `inherits your contractor disputes and your deviations.`
+          + (p.advances ? ` The ${money(p.advances)} of advances your buyers have paid becomes a creditor on your books, and they will come for it.` : '')
+          + ` The land returns to your land bank. Brokers, buyers and your bank will all know you started something you could not finish.`,
+        confirmLabel: 'Abandon the site',
+        danger: true,
+        onConfirm: () => {
+          const r = abandonProject(S, b.dataset.abandon);
+          say(r.ok ? `Site sold on. Recovered ${money(r.recovered)}.` : r.msg);
+          refresh(S); saveGame(S); render();
+        },
+      });
     };
   });
   v.querySelectorAll('[data-loan]').forEach((b) => { b.onclick = () => showLoan(b.dataset.loan); });
@@ -591,19 +602,52 @@ function bindView() {
   v.querySelectorAll('[data-ask]').forEach((r) => {
     r.onchange = () => { setAsk(S, r.dataset.ask, (Number(r.value) / 100) * Number(r.dataset.mkt)); saveGame(S); render(); };
   });
-  const ex = $('#export'); if (ex) ex.onclick = () => {
-    const blob = new Blob([JSON.stringify(S)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = `hyderabad-${dateLabel(S.month).replace(' ', '-')}.json`; a.click();
+  const ex = $('#export'); if (ex) ex.onclick = async () => {
+    const json = JSON.stringify(S);
+    // Try a download first, then the clipboard: embedded browser panes block
+    // page-initiated downloads silently, so the button must not appear to do nothing.
+    try {
+      const blob = new Blob([json], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `hyderabad-${dateLabel(S.month).replace(' ', '-')}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      say('Save exported. If no file appeared, your browser blocked the download — the save has also been copied to your clipboard.');
+    } catch (e) { say('Download blocked; copying the save to your clipboard instead.'); }
+    try { await navigator.clipboard.writeText(json); } catch (e) { /* clipboard unavailable */ }
   };
-  const rs = $('#restart'); if (rs) rs.onclick = () => {
-    if (confirm('Abandon this run permanently?')) { clearSave(); S = null; modal = null; renderStart(); }
-  };
+  const rs = $('#restart'); if (rs) rs.onclick = () => confirmModal({
+    title: 'Abandon this run and start again?',
+    body: `You are in ${dateLabel(S.month)} with a net worth of ${money(S.netWorth)}. This deletes the saved game `
+      + `permanently and returns you to January 1995. There is no way back to this run afterwards.`,
+    confirmLabel: 'Delete and start again',
+    danger: true,
+    onConfirm: () => { clearSave(); S = null; modal = null; tab = 'dashboard'; renderStart(); },
+  });
 }
 
 // ------------------------------------------------------------------ modals
 
 function closeModal() { modal = null; modalRoot.innerHTML = ''; }
+
+/**
+ * In-app confirmation. Never use window.confirm(): embedded browser panes suppress it
+ * and it returns false silently, which makes destructive buttons look broken.
+ */
+function confirmModal({ title, body, confirmLabel, danger = false, onConfirm }) {
+  openModal(`<div class="modal" style="max-width:520px">
+    <div class="head"><div class="cat">Confirm</div><h2>${esc(title)}</h2></div>
+    <div class="body"><p>${esc(body)}</p></div>
+    <div class="foot"><div class="inline">
+      <button class="btn ${danger ? 'danger' : ''}" id="ok">${esc(confirmLabel)}</button>
+      <button class="btn ghost" id="cancel">Cancel</button>
+    </div></div>
+  </div>`, (rootEl) => {
+    $('#cancel', rootEl).onclick = () => { closeModal(); render(); };
+    $('#ok', rootEl).onclick = () => { closeModal(); onConfirm(); };
+  });
+}
 
 function openModal(html, bind) {
   modal = true;
