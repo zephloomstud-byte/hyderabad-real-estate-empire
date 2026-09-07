@@ -8,7 +8,7 @@ import { TIMELINE, regimeAt } from '../data/history.js';
 import { BY_ID, DEFECTS } from '../data/geo.js';
 import { BUILD_TYPES, ROLES, LENDERS } from '../data/costs.js';
 import { EVENTS } from '../data/events.js';
-import { COMPETITORS, FIRST_NAMES, SURNAMES } from './state.js';
+import { COMPETITORS, FIRST_NAMES, SURNAMES, newGame } from './state.js';
 import {
   macroAt, landRate, rentRate, salePrice, capRate, costIndex, dutyRate, salaryIndex,
   makeLandOffer, makeDevAgreement, makeAssetOffer, runDueDiligence, marketView, farFor,
@@ -22,6 +22,28 @@ import { balanceSheet, computeRatios, closeYear, landValue } from './accounting.
 
 let parcelSeq = 0;
 let staffSeq = 0;
+
+// ------------------------------------------------------------------ new game
+
+/**
+ * Start a run. The deal desk is seeded immediately: a broker with three years in
+ * Kukatpally does not wake up on 1 January with nothing to look at, and the opening
+ * screen should present real choices rather than an empty page.
+ */
+export function startGame(seedText, opts = {}) {
+  const s = newGame(seedText, opts);
+  refresh(s);
+  const rng = getRng(s);
+  refreshOffers(s, rng);
+  // One development agreement in the opening spread: it is the capital-light route and
+  // the player should see it exists before they spend everything on a plot.
+  if (!s.offers.some((o) => o.kind === 'devagreement')) {
+    s.offers.push(makeDevAgreement(s.month, s, rng));
+  }
+  saveRng(s, rng);
+  refresh(s);
+  return s;
+}
 
 // ------------------------------------------------------------------ derived state
 

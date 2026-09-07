@@ -3,7 +3,7 @@
 // screen is a pure function of it.
 
 import { money, usd, pct, num, dateLabel, yearOf, round, clamp, SQYD_PER_ACRE, END_MONTH } from '../core/util.js';
-import { newGame, saveGame, loadGame, clearSave, REL_KEYS, COMPETITORS } from '../sim/state.js';
+import { saveGame, loadGame, clearSave, REL_KEYS, COMPETITORS } from '../sim/state.js';
 import { ROLES, BUILD_TYPES, LENDERS, MATERIALS, WAGES } from '../data/costs.js';
 import { BY_ID, DEFECTS } from '../data/geo.js';
 import {
@@ -13,7 +13,7 @@ import {
   dutyRate, salaryIndex, farFor, estimateProject, maxBuildableSqFt, assetValue,
   portfolioNoiAnnual, availableLenders, offeredRate, creditDecision, landValue,
   abandonProject, remainingCommitments, freeSqYd,
-  repayLoan, quotePrepayment, remainingTenure, interestIfHeld, brokerDeal,
+  repayLoan, quotePrepayment, remainingTenure, interestIfHeld, brokerDeal, startGame,
 } from '../sim/engine.js';
 import { materialPrice, wage } from '../sim/market.js';
 
@@ -78,12 +78,12 @@ function renderStart() {
   </main>`;
 
   $('#go').onclick = () => {
-    S = newGame($('#f-seed').value || String(Date.now()), {
+    S = startGame($('#f-seed').value || String(Date.now()), {
       cash: Math.max(100000, Number($('#f-cash').value) || 2500000),
       name: $('#f-name').value.trim() || 'You',
       firmName: $('#f-firm').value.trim() || null,
     });
-    refresh(S);
+    tab = 'deals';
     saveGame(S);
     render();
   };
