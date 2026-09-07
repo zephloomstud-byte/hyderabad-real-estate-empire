@@ -14,39 +14,39 @@ const A = (pairs) => pairs.map(([year, v]) => ({ year, v }));
  */
 export const BUILD_TYPES = {
   godown: {
-    id: 'godown', name: 'Warehouse / godown', cost: 130, months: 8, use: 'industrial',
+    id: 'godown', name: 'Warehouse / godown', cost: 130, months: 8, refSqFt: 20000, minMonths: 5, use: 'industrial',
     minSqFt: 8000, quality: 0.5, desc: 'Steel truss, AC sheet roof, murram floor. Fast, cheap, low rent, long leases.',
   },
   economy: {
-    id: 'economy', name: 'Economy apartments', cost: 265, months: 20, use: 'res',
+    id: 'economy', name: 'Economy apartments', cost: 265, months: 18, refSqFt: 20000, minMonths: 10, use: 'res',
     minSqFt: 3000, quality: 0.45, desc: 'Load-bearing plus RCC, mosaic floors, no lift below four floors. Sells on price alone.',
   },
   standard: {
-    id: 'standard', name: 'Standard apartments', cost: 340, months: 24, use: 'res',
+    id: 'standard', name: 'Standard apartments', cost: 340, months: 22, refSqFt: 25000, minMonths: 12, use: 'res',
     minSqFt: 4000, quality: 0.65, desc: 'RCC frame, Kota or ceramic flooring, one lift, covered parking. The mass market.',
   },
   premium: {
-    id: 'premium', name: 'Premium apartments', cost: 520, months: 30, use: 'res',
+    id: 'premium', name: 'Premium apartments', cost: 520, months: 28, refSqFt: 40000, minMonths: 16, use: 'res',
     minSqFt: 8000, quality: 0.82, desc: 'Granite, two lifts, generator backup, landscaped setbacks. Needs a good address to work.',
   },
   villa: {
-    id: 'villa', name: 'Villa community', cost: 680, months: 34, use: 'res',
+    id: 'villa', name: 'Villa community', cost: 680, months: 30, refSqFt: 60000, minMonths: 18, use: 'res',
     minSqFt: 15000, quality: 0.88, desc: 'Independent houses on a gated layout. Land-hungry, slow, and very profitable in the right corridor.',
   },
   officeShell: {
-    id: 'officeShell', name: 'Office building (bare shell)', cost: 420, months: 26, use: 'office',
+    id: 'officeShell', name: 'Office building (bare shell)', cost: 420, months: 24, refSqFt: 50000, minMonths: 14, use: 'office',
     minSqFt: 12000, quality: 0.6, desc: 'Structure, core, lifts, basic services. Tenant fits out. Lower cost, lower rent.',
   },
   officeA: {
-    id: 'officeA', name: 'Grade A office campus', cost: 640, months: 34, use: 'office',
+    id: 'officeA', name: 'Grade A office campus', cost: 640, months: 32, refSqFt: 150000, minMonths: 20, use: 'office',
     minSqFt: 60000, quality: 0.88, desc: 'Central air conditioning, full power backup, structured parking. What multinationals will actually sign a nine-year lease on.',
   },
   retail: {
-    id: 'retail', name: 'Retail / shopping centre', cost: 720, months: 32, use: 'retail',
+    id: 'retail', name: 'Retail / shopping centre', cost: 720, months: 30, refSqFt: 100000, minMonths: 18, use: 'retail',
     minSqFt: 30000, quality: 0.85, desc: 'Atrium, escalators, HVAC, anchor tenant. High capital, high rent, very sensitive to catchment.',
   },
   hotel: {
-    id: 'hotel', name: 'Hotel', cost: 1300, months: 40, use: 'retail',
+    id: 'hotel', name: 'Hotel', cost: 1300, months: 38, refSqFt: 120000, minMonths: 24, use: 'retail',
     minSqFt: 40000, quality: 0.9, desc: 'Rooms, kitchens, banquet. Operating business, not just an asset. Needs an operator.',
   },
 };

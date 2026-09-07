@@ -162,6 +162,65 @@ export function negotiate(s, offer, offerPrice) {
   return result;
 }
 
+/**
+ * Broker a deal instead of buying it: introduce a buyer, take a commission, use no
+ * capital. One to two per cent was the going rate in Hyderabad, which on a small plot
+ * is a few thousand rupees — enough to cover the household and the scooter, not enough
+ * to build anything. It is how you started and it is how a great many people in this
+ * trade stayed alive between projects.
+ *
+ * It is also not free: deals fall through, and a broker who cannot close stops being
+ * called. Every month spent broking is a month not spent building.
+ */
+export function brokerDeal(s, offerId) {
+  const offer = s.offers.find((o) => o.id === offerId);
+  if (!offer) return { ok: false, msg: 'That offer is gone.' };
+  if (offer.kind === 'devagreement') return { ok: false, msg: 'There is no sale to broker — this is a development agreement.' };
+
+  const rng = getRng(s);
+  const price = offer.negotiatedPrice ?? offer.price;
+  // Finding a buyer at all depends on knowing the market and knowing people.
+  const chance = clamp(
+    0.30 + s.skills.realestate / 260 + s.skills.negotiation / 400
+    + s.relations.landowners / 500 + clamp(s.reputation, 0, 100) / 400
+    + (s.macro.demand - 1) * 0.18,
+    0.12, 0.88,
+  );
+  const closed = rng.f() < chance;
+  // Full brokerage is 2%, usually split with whoever else touched the deal.
+  const rate = closed ? rng.range(0.009, 0.02) : 0;
+  const fee = Math.round(price * rate);
+
+  s.offers = s.offers.filter((o) => o.id !== offerId);
+  s.brokerage = (s.brokerage || 0) + fee;
+  s.stats.dealsBrokered = (s.stats.dealsBrokered || 0) + (closed ? 1 : 0);
+  s.stats.dealsAttempted = (s.stats.dealsAttempted || 0) + 1;
+  saveRng(s, rng);
+
+  if (!closed) {
+    s.relations.landowners = clamp(s.relations.landowners - 2, 0, 100);
+    s.news.push({
+      m: s.month, tag: 'BROKERAGE', head: `No buyer for ${offer.label}`,
+      body: `You showed it to three parties over five weeks. One was interested until his brother-in-law told him the road was too narrow. ${offer.seller} has given it to somebody else.`,
+    });
+    return { ok: true, closed: false, fee: 0 };
+  }
+
+  s.cash += fee;
+  s.skills.realestate = clamp(s.skills.realestate + 0.5, 0, 100);
+  s.skills.negotiation = clamp(s.skills.negotiation + 0.3, 0, 100);
+  s.relations.landowners = clamp(s.relations.landowners + 4, 0, 100);
+  s.relations.community = clamp(s.relations.community + 1, 0, 100);
+  s.reputation = clamp(s.reputation + 0.4, 0, 100);
+  s.revenueYTD += fee;
+  s.ledger.push({ m: s.month, type: 'Brokerage', amount: fee, note: offer.label });
+  s.news.push({
+    m: s.month, tag: 'BROKERAGE', head: `Brokered ${offer.label} for ${money(fee)}`,
+    body: `Registered last Tuesday. ${offer.seller} paid your commission in cash at the sub-registrar's office and asked whether you had anything else. No capital of yours went into it, and none of the upside is yours either.`,
+  });
+  return { ok: true, closed: true, fee };
+}
+
 export function launchProject(s, parcelId, typeId, sqFt, mode, name) {
   const parcel = s.parcels.find((p) => p.id === parcelId);
   if (!parcel || parcel.consumed || freeSqYd(parcel) < 100) return { ok: false, msg: 'There is no land left on that parcel.' };
@@ -176,16 +235,18 @@ export function launchProject(s, parcelId, typeId, sqFt, mode, name) {
   // across everything you already have running. Buyer advances cover the rest, if the
   // market cooperates. If it does not, the site simply stops.
   const committed = remainingCommitments(s);
-  // Rule of thumb the trade actually used: put up something close to half the build
-  // cost yourself and fund the rest from buyer advances and borrowing. Below that you
-  // are not a developer, you are a man with a hole in the ground.
-  const need = (committed + est.schedule.peak) * 0.45;
+  // Rule of thumb the trade actually used: put up roughly a third of the build cost and
+  // fund the rest from buyer advances and borrowing. That is genuinely how Indian
+  // residential development was financed — the buyers were the lender — and it is why
+  // a builder with twenty-five lakh could run a project costing three times that.
+  // Below a third you are not a developer, you are a man with a hole in the ground.
+  const need = (committed + est.schedule.peak) * 0.32;
   if (s.cash < need) {
     return {
       ok: false,
       msg: `You cannot fund this. Total build cost ${money(est.budget)} over ${est.approvalMonths + est.months} months`
         + (committed > 0 ? `, on top of ${money(committed)} still to spend on projects already running` : '')
-        + `. You should have roughly forty-five per cent of that in hand — about ${money(need)} — and you have ${money(s.cash)}. `
+        + `. You should have roughly a third of that in hand — about ${money(need)} — and you have ${money(s.cash)}. `
         + `Build smaller, sell something, or raise money first.`,
     };
   }

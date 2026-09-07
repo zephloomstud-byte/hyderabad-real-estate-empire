@@ -60,7 +60,7 @@ function play(seed) {
             const sqFt = Math.min(cap, want);
             if (sqFt < t.minSqFt) continue;
             const est = estimateProject(p, t.id, sqFt, s);
-            if ((committed + est.schedule.peak) * 0.45 > s.cash) continue;
+            if ((committed + est.schedule.peak) * 0.32 > s.cash) continue;
             const profit = est.grossValue - est.budget;
             const roi = profit / est.schedule.peak;
             if (profit > 0 && (!best || roi > best.roi)) best = { t, sqFt, profit, roi, est };

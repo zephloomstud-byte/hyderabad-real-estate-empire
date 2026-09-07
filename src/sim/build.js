@@ -24,6 +24,18 @@ export function freeSqYd(parcel) {
   return Math.max(0, parcel.areaSqYd - (parcel.usedSqYd || 0));
 }
 
+/**
+ * How long this actually takes to build. A six-flat building in Kukatpally went up in
+ * a bit over a year; a township took three. `months` on the build type is the duration
+ * at `refSqFt`, and everything scales off that with a damped exponent, because doubling
+ * the area does not double the programme.
+ */
+export function projectMonths(bt, sqFt) {
+  const ref = bt.refSqFt || bt.minSqFt * 3;
+  const scale = Math.pow(Math.max(0.2, sqFt / ref), 0.38);
+  return Math.max(bt.minMonths || Math.round(bt.months * 0.5), Math.round(bt.months * scale));
+}
+
 export function maxBuildableSqFt(parcel, s) {
   const loc = BY_ID[parcel.locality];
   const far = farFor(loc, s.month, s.flags);
@@ -58,18 +70,22 @@ export function estimateProject(parcel, typeId, sqFt, s) {
   // The 9% spent during the approval phase is design, approval and launch cost — part
   // of the all-in figure, not an addition to it.
   const budget = Math.round(sqFt * bt.cost * ci);
+  // Small residential files move faster than large or unusual ones.
+  const sizeFactor = clamp(0.62 + sqFt / 90000, 0.62, 1.5);
   const approvalMonths = Math.max(2, Math.round(
     APPROVAL_BASE_MONTHS
+    * sizeFactor
     * (2 - s.macro.regime.approvalSpeed)
     / (s.approvalSpeedMod || 1)
     * (1 - clamp(s.relations.bureaucrats, 0, 100) / 260)
     * (s.staff.some((x) => x.impact === 'approvals') ? 0.72 : 1),
   ));
+  const months = projectMonths(bt, sqFt);
   const price = salePrice(parcel.locality, typeId, s.month, s);
-  const sched = fundingSchedule(budget, approvalMonths, bt.months);
+  const sched = fundingSchedule(budget, approvalMonths, months);
   return {
     budget, approvalMonths,
-    months: bt.months,
+    months,
     grossValue: Math.round(sqFt * price),
     pricePerSqFt: price,
     costPerSqFt: budget / sqFt,
@@ -92,7 +108,7 @@ export function startProject(s, parcel, typeId, sqFt, mode, name) {
     sqFt, mode,
     budget: est.budget, spent: 0, overrunPct: 0,
     stage: 'approval', approvalLeft: est.approvalMonths, approvalTotal: est.approvalMonths,
-    months: est.months, elapsed: 0, delay: 0, stalled: 0,
+    months: est.months, elapsed: 0, delay: 0, stalled: 0, riskDelay: 0,
     quality: bt.quality,
     askPerSqFt: est.pricePerSqFt,
     devAgreement: parcel.devAgreement || null,
@@ -300,16 +316,24 @@ export function abandonProject(s, projectId, marketFactor = 1) {
 
 /** Pre-launch sales during construction: bookings and advances, at a discount. */
 export function tickPresales(p, s, rng) {
-  if (p.stage !== 'construction' || p.mode !== 'sell') return 0;
-  // From 2017, RERA escrow means only 30% of buyer money is available for anything else.
+  if (p.mode !== 'sell') return 0;
+  if (p.stage !== 'construction' && p.stage !== 'approval') return 0;
+  // From 2017, RERA escrow means only a fraction of buyer money is usable elsewhere.
   const reraDrag = s.flags.RERA ? 0.42 : 1;
-  const progress = p.elapsed / (p.months + p.delay);
-  if (progress < 0.08) return 0;
+
+  // Pre-launch. Builders took bookings the moment the file was in, at a real discount,
+  // and that money is what paid for the foundation. Waiting for the structure to come
+  // up would have starved every project in the city of working capital.
+  const preLaunch = p.stage === 'approval';
+  if (preLaunch && p.approvalTotal - p.approvalLeft < 1) return 0;
+
+  const progress = preLaunch ? 0 : p.elapsed / Math.max(1, p.months + p.delay);
+  if (!preLaunch && progress < 0.02) return 0;
   // Under-construction stock sells at a discount to finished stock, and that discount
   // is exactly what makes it move. `disc` below 1 means cheaper than market.
-  const disc = 0.86 + progress * 0.12;
-  const rate = absorptionRate(p.locality, p.type, disc, s) * reraDrag;
-  const sqFtSold = Math.min((p.sqFt - (p.presold || 0)) * rate, p.sqFt * 0.08);
+  const disc = preLaunch ? 0.80 : 0.86 + progress * 0.12;
+  const rate = absorptionRate(p.locality, p.type, disc, s) * reraDrag * (preLaunch ? 0.45 : 1);
+  const sqFtSold = Math.min((p.sqFt - (p.presold || 0)) * rate, p.sqFt * (preLaunch ? 0.04 : 0.08));
   if (sqFtSold < 1) return 0;
   p.presold = Math.min(p.sqFt, (p.presold || 0) + sqFtSold);
   const price = salePrice(p.locality, p.type, s.month, s) * disc;

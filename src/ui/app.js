@@ -13,7 +13,7 @@ import {
   dutyRate, salaryIndex, farFor, estimateProject, maxBuildableSqFt, assetValue,
   portfolioNoiAnnual, availableLenders, offeredRate, creditDecision, landValue,
   abandonProject, remainingCommitments, freeSqYd,
-  repayLoan, quotePrepayment, remainingTenure, interestIfHeld,
+  repayLoan, quotePrepayment, remainingTenure, interestIfHeld, brokerDeal,
 } from '../sim/engine.js';
 import { materialPrice, wage } from '../sim/market.js';
 
@@ -170,7 +170,9 @@ views.dashboard = () => {
       ${kpi('Net worth', money(S.netWorth), `${usd(S.netWorth, S.macro.usd)} · real ${money(S.netWorth / (S.macro.cpiIndex / 100))} in 1995 money`)}
       ${kpi('Cash', money(S.cash), `Burn ${money(monthlyBurn())}/mo`)}
       ${kpi('Land bank', num(S.parcels.filter((p) => p.owned && !p.consumed).reduce((t, p) => t + p.areaSqYd, 0)) + ' sq yd', money(bs.land) + ' at market')}
-      ${kpi('Rental NOI', money(S.ratios.noi), `${pct(S.ratios.occupancy)} occupied · ${num(S.assets.reduce((t, a) => t + a.sqFt, 0))} sq ft`)}
+      ${S.assets.length || !S.brokerage
+        ? kpi('Rental NOI', money(S.ratios.noi), `${pct(S.ratios.occupancy)} occupied · ${num(S.assets.reduce((t, a) => t + a.sqFt, 0))} sq ft`)
+        : kpi('Brokerage earned', money(S.brokerage), `${S.stats.dealsBrokered || 0} of ${S.stats.dealsAttempted || 0} introductions closed`)}
     </div>
 
     ${alerts.length ? `<div class="card"><h3>Needs attention</h3>${alerts.map((a) => `<div class="row"><span class="l">${a.icon} ${a.text}</span><span class="r">${a.tag}</span></div>`).join('')}</div>` : ''}
@@ -243,7 +245,8 @@ views.dashboard = () => {
 views.deals = () => {
   if (!S.offers.length) return emptyCard('No live opportunities this month. Advance the calendar — brokers will bring you something.');
   return `<div class="stack">
-    <div class="card tight"><span class="small muted">Stamp duty, transfer duty and registration today: <b>${pct(dutyRate(S.month))}</b> of consideration.
+    <div class="card tight"><span class="small muted">You do not have to buy. <b>Broker it</b> introduces a buyer for one to two per cent of the price, uses none of your capital, and hands the upside to somebody else — which is how you have paid your bills for three years.<br>
+    Stamp duty, transfer duty and registration today: <b>${pct(dutyRate(S.month))}</b> of consideration.
     Every rupee of land you buy costs ${pct(1 + dutyRate(S.month), 1)} of the price. Investigate before you commit — the cheap ones are cheap for a reason.</span></div>
     <div class="grid g2">
     ${S.offers.map((o) => {
@@ -266,7 +269,8 @@ views.deals = () => {
         ${o.known.length
           ? `<div style="margin-top:8px">${o.known.map((d) => `<span class="pill warn" title="${esc(DEFECTS[d].desc)}">${esc(DEFECTS[d].name)}</span> `).join('')}</div>`
           : o.ddDone ? `<div style="margin-top:8px"><span class="pill good">Nothing found — ${pct(o.ddConfidence || 0.3, 0)} confidence</span></div>` : ''}
-        <div class="inline" style="margin-top:12px"><button class="btn sm" data-deal="${o.id}">Open</button></div>
+        <div class="inline" style="margin-top:12px"><button class="btn sm" data-deal="${o.id}">Open</button>
+          ${o.kind !== 'devagreement' ? `<button class="btn sm ghost" data-broker="${o.id}" title="Introduce a buyer and take a commission. No capital, no upside.">Broker it</button>` : ''}</div>
       </div>`;
     }).join('')}
     </div></div>`;
@@ -574,6 +578,7 @@ function bindView() {
   const v = $('#view');
   if (!v) return;
   v.querySelectorAll('[data-deal]').forEach((b) => { b.onclick = () => showDeal(b.dataset.deal); });
+  v.querySelectorAll('[data-broker]').forEach((b) => { b.onclick = () => doBroker(b.dataset.broker); });
   v.querySelectorAll('[data-build]').forEach((b) => { b.onclick = () => showBuild(b.dataset.build); });
   v.querySelectorAll('[data-sellland]').forEach((b) => {
     b.onclick = () => { const r = sellParcel(S, b.dataset.sellland); say(r.ok ? `Sold for ${money(r.net)} — a ${r.gain >= 0 ? 'gain' : 'loss'} of ${money(Math.abs(r.gain))}.` : r.msg); refresh(S); saveGame(S); render(); };
@@ -683,6 +688,25 @@ function showEvent() {
   });
 }
 
+function doBroker(id) {
+  const o = S.offers.find((x) => x.id === id);
+  if (!o) return;
+  const price = o.negotiatedPrice ?? o.price;
+  confirmModal({
+    title: `Broker ${o.label} rather than buy it?`,
+    body: `You would introduce a buyer to ${o.seller} and take one to two per cent — somewhere around `
+      + `${money(price * 0.009)} to ${money(price * 0.02)} — without putting up a rupee. `
+      + `You also give up the property, and everything it might have been worth in ten years.\n\n`
+      + `Not every introduction closes. Yours close more often the better you know the market and the people in it.`,
+    confirmLabel: 'Find a buyer for it',
+    onConfirm: () => {
+      const r = brokerDeal(S, id);
+      say(r.closed ? `Brokered. ${money(r.fee)} commission, no capital employed.` : 'The deal fell through. Five weeks, nothing to show for it.');
+      refresh(S); saveGame(S); render();
+    },
+  });
+}
+
 function showDeal(id) {
   const o = S.offers.find((x) => x.id === id);
   if (!o) return;
@@ -743,6 +767,7 @@ function showDeal(id) {
     </div>
     <div class="foot">
       <div class="inline">
+        ${o.kind !== 'devagreement' ? `<button class="btn ghost" id="brokerit">Broker it instead — commission only</button>` : ''}
         <button class="btn" id="buy" ${S.cash < (o.kind === 'devagreement' ? o.advance : price + duty + legal) ? 'disabled' : ''}>
           ${o.kind === 'devagreement' ? `Sign the agreement (${money(o.advance)} advance)` : `Buy and register — ${money(price + duty + legal)}`}
         </button>
@@ -767,6 +792,8 @@ function showDeal(id) {
       say(r.msg); saveGame(S); closeModal();
       if (S.offers.find((x) => x.id === id)) showDeal(id); else render();
     };
+    const bk = $('#brokerit', rootEl);
+    if (bk) bk.onclick = () => { closeModal(); doBroker(id); };
     $('#close', rootEl).onclick = () => { closeModal(); render(); };
     $('#buy', rootEl).onclick = () => {
       let r;
@@ -795,7 +822,7 @@ function showBuild(parcelId) {
       const sq = Math.min(cap, want);
       if (sq < bt.minSqFt) continue;
       const e = estimateProject(p, typeId, sq, S);
-      if ((committed + e.schedule.peak) * 0.45 <= S.cash) return sq;
+      if ((committed + e.schedule.peak) * 0.32 <= S.cash) return sq;
     }
     return Math.max(bt.minSqFt, Math.min(cap, 3000));
   };
@@ -811,7 +838,7 @@ function showBuild(parcelId) {
     const cr = capRate(bt.use, S.month, S);
     const holdValue = holdNoi > 0 ? holdNoi / cr : 0;
     const own = p.devAgreement ? 1 - p.devAgreement.ownerShare : 1;
-    const need = (committed + est.schedule.peak) * 0.45;
+    const need = (committed + est.schedule.peak) * 0.32;
     const fundable = S.cash >= need;
     $('#estimate').innerHTML = `
       ${row('Buildable now (FAR ' + farFor(loc, S.month, S.flags).toFixed(2) + ')', num(cap) + ' sq ft')}

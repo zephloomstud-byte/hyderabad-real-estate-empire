@@ -54,7 +54,7 @@ function play(seed) {
             if (sqFt < t.minSqFt) continue;
             const est = estimateProject(p, t.id, sqFt, s);
             // Two-thirds of peak funding in hand, over and above the reserve.
-            if (est.schedule.peak * 0.65 > free) continue;
+            if (est.schedule.peak * 0.45 > free) continue;
             const profit = est.grossValue - est.budget;
             const roi = profit / est.schedule.peak;
             if (roi > 0.18 && (!best || roi > best.roi)) best = { t, sqFt, roi, est };
