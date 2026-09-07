@@ -224,7 +224,7 @@ export function completeProject(p, s) {
     const rate = rentRate(p.locality, use, s.month, s.flags) || rentRate(p.locality, 'res', s.month, s.flags);
     s.assets.push({
       id: `A${++assetSeq}`,
-      name: p.name, locality: p.locality, use, sqFt: ownSqFt,
+      name: p.name, locality: p.locality, use, type: p.type, sqFt: ownSqFt,
       rentPerSqFt: rate * (0.85 + p.quality * 0.3),
       occupancy: 0.0, targetOcc: 0.9,
       opexRatio: 0.22, quality: p.quality,

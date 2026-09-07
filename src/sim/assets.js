@@ -4,8 +4,7 @@
 // when the cycle turns and the floors empty.
 
 import { clamp } from '../core/util.js';
-import { rentRate, capRate } from './market.js';
-import { taxRate } from './market.js';
+import { rentRate, capRate, salePrice, taxRate } from './market.js';
 
 /** Lease-up, rent revision, vacancy and operating cost for one asset, one month. */
 export function tickAsset(a, s, rng) {
@@ -43,11 +42,30 @@ export function tickAsset(a, s, rng) {
   return { collected, opex, noi };
 }
 
+/**
+ * What the asset is worth.
+ *
+ * Commercial property is valued on its income, capitalised at the going rate — that is
+ * how offices, shops and warehouses actually change hands.
+ *
+ * Residential is not. Flats are worth what flats are worth, whether you let them or
+ * sell them. Indian residential yields were three to five per cent while commercial
+ * cap rates were twelve to fifteen, so capitalising a flat's rent at a commercial cap
+ * rate valued a held building at a fifth of the identical building sold — which made
+ * holding residential stock a guaranteed way to destroy money and quietly removed the
+ * entire hold-and-compound strategy from the game.
+ */
 export function assetValue(a, s) {
+  if (a.use === 'res') {
+    // Vacant possession value, less a discount for being tenanted and sold in one lot.
+    const psf = salePrice(a.locality, a.type || 'standard', s.month, s);
+    const tenanted = 0.90 + (1 - a.occupancy) * 0.06;
+    return Math.round(a.sqFt * psf * tenanted * (0.9 + a.quality * 0.15));
+  }
   const noiAnnual = Math.max(0, (a.lastNoi || 0) * 12);
   const cr = capRate(a.use, s.month, s);
   if (noiAnnual <= 0) {
-    // An empty building is still worth something: land plus depreciated construction.
+    // An empty commercial building is still land plus depreciated construction.
     return Math.round(a.bookCost * 0.75);
   }
   const stabilised = a.sqFt * a.rentPerSqFt * Math.max(a.occupancy, 0.6) * 12 * (1 - a.opexRatio);
