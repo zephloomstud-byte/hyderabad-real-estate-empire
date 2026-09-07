@@ -55,9 +55,9 @@ export function fundingSchedule(budget, approvalMonths, months) {
 export function estimateProject(parcel, typeId, sqFt, s) {
   const bt = BUILD_TYPES[typeId];
   const ci = costIndex(s.month);
-  const build = sqFt * bt.cost * ci;
-  const soft = build * 0.09;                    // design, approvals, fees, marketing
-  const budget = Math.round(build + soft);
+  // The 9% spent during the approval phase is design, approval and launch cost — part
+  // of the all-in figure, not an addition to it.
+  const budget = Math.round(sqFt * bt.cost * ci);
   const approvalMonths = Math.max(2, Math.round(
     APPROVAL_BASE_MONTHS
     * (2 - s.macro.regime.approvalSpeed)
@@ -134,7 +134,12 @@ export function tickProject(p, s, rng) {
   const n = p.months + (p.riskDelay || 0);
   const share = sCurve(p.elapsed, n);
   const hard = p.budget * 0.91;
-  const want = Math.round(hard * share * (1 + p.overrunPct));
+  const cap = hard * (1 + p.overrunPct);
+  const softSpent = p.budget * 0.09;
+  const hardSpent = Math.max(0, p.spent - softSpent);
+  const want = Math.round(Math.min(hard * share * (1 + p.overrunPct), Math.max(0, cap - hardSpent)));
+  // The work is paid for; nothing is left to spend but the programme is not finished.
+  if (want <= 0) { completeProject(p, s); return 0; }
 
   // Sites do not stop dead when money is short; they slow down. Pay what you can,
   // and the programme stretches by whatever fraction of the month's work you could

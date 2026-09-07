@@ -70,21 +70,21 @@ export function salePrice(locId, buildType, m, s) {
   const bt = BUILD_TYPES[buildType];
   const land = landRate(locId, m, s);
   const far = farFor(loc, m, s ? s.flags : {});
-  // Land cost embedded per built square foot, plus construction, plus a developer margin
-  // that expands in booms and vanishes in busts.
   // Land cost embedded in every built square foot, plus construction and soft cost,
   // plus the developer's margin. Locality prestige is deliberately NOT applied again
   // here: it is already fully expressed in the land rate, which is fifty times higher
   // in Banjara Hills than in Manikonda. Applying it twice crushed margins in cheap
   // localities and made peripheral development permanently unprofitable.
   const landPerSqFt = land / (9 * far);          // 1 sq yd = 9 sq ft
-  const build = bt.cost * costIndex(m) * 1.09;   // includes design, approvals, marketing
+  const build = bt.cost * costIndex(m);          // already all-in
   const macro = s ? s.macro : macroAt(m);
-  // Gross developer margin: about 30% in the flat mid-nineties, near 70% at the peak of
-  // the 2006 mania, barely 10% through the Telangana agitation. Interest, overheads,
-  // delays and tax all come out of this, which is why so many builders who looked
-  // profitable on paper were not.
-  const margin = clamp(0.32 + (macro.demand - 1) * 0.50, -0.10, 0.85);
+  // Gross developer margin on total cost: a little under 40% in the flat mid-nineties,
+  // near 85% at the peak of the 2006 mania, barely 15% through the Telangana agitation.
+  // Interest, overheads, delays and tax all come out of this, which is why plenty of
+  // builders who looked profitable on paper were not — but it has to be wide enough
+  // that a well-run project beats leaving the money in a fixed deposit, or nobody
+  // would ever have built anything.
+  const margin = clamp(0.48 + (macro.demand - 1) * 0.50, -0.05, 0.95);
   const quality = 0.92 + bt.quality * 0.22;
   return (landPerSqFt + build) * (1 + margin) * quality;
 }
