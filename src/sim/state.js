@@ -2,6 +2,7 @@
 
 import { makeRng, hashSeed } from '../core/rng.js';
 import { LOCALITIES } from '../data/geo.js';
+import { initialIntel } from './intel.js';
 
 export const SAVE_KEY = 'ree_hyd_save_v1';
 export const SAVE_VERSION = 1;
@@ -122,6 +123,7 @@ export function newGame(seedText = String(Date.now()), opts = {}) {
     eventCooldown: {},
 
     flags: {},
+    intel: initialIntel(),
     stats: { projectsDone: 0, unitsSold: 0, sqftBuilt: 0, landBoughtSqYd: 0, defectsHit: 0, bribesTaken: 0 },
     soldUnits: 0,
     revenueYTD: 0, costYTD: 0, interestYTD: 0, opexYTD: 0, taxYTD: 0, noiYTD: 0,

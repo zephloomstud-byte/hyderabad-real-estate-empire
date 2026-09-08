@@ -7,6 +7,7 @@ import { LOCALITIES, BY_ID, RENT_TRACK, DEFECTS } from '../data/geo.js';
 import { COST_TRACK, DUTY_TRACK, FAR_TRACK, FAR_AIRPORT, MATERIALS, WAGES, WAGE_TRACK,
   SALARY_TRACK, BUILD_TYPES, LAYOUT_TYPES, TAX_TRACK } from '../data/costs.js';
 import { FIRST_NAMES, SURNAMES } from './state.js';
+import { intelLevel, fuzzRate, surveyCost, INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN } from './intel.js';
 
 /** Blend the annual macro series into a monthly reading, applying month-keyed shocks. */
 export function macroAt(m) {
@@ -157,17 +158,21 @@ export function marketView(m, s) {
   return LOCALITIES.map((loc) => {
     const rate = landRate(loc.id, m, s);
     const prev = m >= 12 ? landRate(loc.id, m - 12, s) : rate;
-    const known = loc.zone === 'core' || loc.tags.includes('residential') ||
-      s.flags.HITEC_ANNOUNCE || m > 60 || s.skills.realestate > 70;
+    const level = intelLevel(s, loc.id);
+    const shown = fuzzRate(s, loc.id, rate);
+    const full = level === INTEL_KNOWN;
     return {
-      id: loc.id, name: loc.name, zone: loc.zone, rate, yoy: rate / prev - 1,
-      perAcre: rate * SQYD_PER_ACRE,
-      resRent: rentRate(loc.id, 'res', m, s.flags),
-      officeRent: rentRate(loc.id, 'office', m, s.flags),
-      retailRent: rentRate(loc.id, 'retail', m, s.flags),
-      far: farFor(loc, m, s.flags),
+      id: loc.id, name: loc.name, zone: loc.zone,
+      level, rate: shown.value, band: shown.band, trueRate: rate,
+      yoy: full ? rate / prev - 1 : null,
+      perAcre: shown.value === null ? null : shown.value * SQYD_PER_ACRE,
+      resRent: full ? rentRate(loc.id, 'res', m, s.flags) : null,
+      officeRent: full ? rentRate(loc.id, 'office', m, s.flags) : null,
+      retailRent: full ? rentRate(loc.id, 'retail', m, s.flags) : null,
+      far: full ? farFor(loc, m, s.flags) : null,
+      surveyCost: surveyCost(s, loc.id),
       liquidity: loc.liquidity, prestige: loc.prestige, desc: loc.desc,
-      tags: loc.tags, obscure: !known,
+      tags: loc.tags, obscure: level === INTEL_NONE,
     };
   });
 }
@@ -353,3 +358,6 @@ export function unapprovedPenalty(m) {
     absorption: anchorAt(UNAPPROVED_ABSORPTION, m),
   };
 }
+
+// Re-exported so the interface has one import path for anything market-facing.
+export { intelLevel, fuzzRate, surveyCost, INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN };

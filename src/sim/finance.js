@@ -192,3 +192,65 @@ export function quotePrepayment(loan, amount, month) {
     newOutstanding: loan.outstanding - principal,
   };
 }
+
+// ---------------------------------------------------------------- lease rental discounting
+
+/**
+ * Lease Rental Discounting. You do not borrow against the building; you borrow against
+ * the stream of rent a tenant has contracted to pay you, and the lender takes that rent
+ * directly. Because the security is a covenant rather than a lump of concrete, it prices
+ * two to three points inside construction finance and runs for ten to fifteen years.
+ *
+ * This is the instrument that turns a developer into a landlord. Build an office, let it,
+ * discount the lease, and the money that comes back builds the next one — while you still
+ * own the first. Every large Indian property group scaled on exactly this.
+ *
+ * The catch is that the instalment is fixed and the rent is not. If the tenant leaves you
+ * still owe the bank, and the building that was financing your growth starts consuming it.
+ *
+ * Before the early 2000s there is no such product; the best available is a crude loan
+ * against property at worse terms, which is what the period actually offered.
+ */
+export function lrdAvailable(s) {
+  return s.month >= 60;                                 // rough emergence of the product
+}
+
+export function lrdQuote(s, asset, assetVal) {
+  const proper = s.month >= 100;                        // named LRD product, early 2000s
+  const occ = asset.occupancy;
+  const noiAnnual = Math.max(0, (asset.lastNoi || 0) * 12);
+
+  const reasons = [];
+  if (asset.use === 'res') reasons.push('Lenders will not discount residential rent: the yield is too thin and the tenants too easy to lose.');
+  if (occ < 0.65) reasons.push(`Occupancy of ${Math.round(occ * 100)} per cent is below the 65 per cent the lender needs to see.`);
+  if (noiAnnual <= 0) reasons.push('The building is not producing a net income to discount.');
+  if (asset.pledged) reasons.push('Already charged to another facility.');
+  if (!lrdAvailable(s)) reasons.push('No lender in Hyderabad is discounting lease rentals yet. The product does not exist.');
+
+  const baseLtv = proper ? 0.70 : 0.55;
+  const ltv = clamp(
+    baseLtv * (0.7 + occ * 0.35) * (asset.anchor ? 1.08 : 1) * clamp(s.macro.credit / 0.7, 0.5, 1.15),
+    0.2, 0.78,
+  );
+  const tenure = proper ? 144 : 84;
+  // Priced off the rent stream, so materially inside development finance.
+  const rate = clamp(
+    s.macro.plr / 100 + (proper ? 0.005 : 0.02)
+    + (1 - s.macro.credit) * 0.02
+    - (asset.anchor ? 0.005 : 0)
+    - clamp(s.relations.banks / 1600, 0, 0.008),
+    0.075, 0.20,
+  );
+
+  // Never lend more than the rent can service with cover to spare.
+  const maxByCover = (noiAnnual / 1.35) / 12 / (rate / 12 / (1 - Math.pow(1 + rate / 12, -tenure)));
+  const amount = Math.floor(Math.min(assetVal * ltv, maxByCover) / 10000) * 10000;
+
+  const emi = amount > 0 ? emiFor(amount, rate, tenure) : 0;
+  return {
+    eligible: reasons.length === 0 && amount >= 100000,
+    reasons, amount: Math.max(0, amount), rate, tenure, ltv, emi,
+    dscr: emi > 0 ? (noiAnnual / 12) / emi : 0,
+    proper, noiAnnual,
+  };
+}

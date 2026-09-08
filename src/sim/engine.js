@@ -15,12 +15,15 @@ import {
   plotPrice, plotAbsorption,
 } from './market.js';
 import { creditDecision, takeLoan, serviceDebt, totalDebt, availableLenders, offeredRate, distressedLoans,
-  quotePrepayment, prepaymentPenaltyRate, remainingTenure, interestIfHeld } from './finance.js';
+  quotePrepayment, prepaymentPenaltyRate, remainingTenure, interestIfHeld,
+  lrdQuote, lrdAvailable } from './finance.js';
 import { startProject, tickProject, tickPresales, tickInventory, estimateProject, maxBuildableSqFt,
   remainingCommitments, abandonProject, fundingSchedule, freeSqYd, landConsumedBy,
   estimateLayout, isLayout } from './build.js';
 import { tickAsset, assetValue, portfolioNoiAnnual, propertyTax } from './assets.js';
 import { balanceSheet, computeRatios, closeYear, landValue } from './accounting.js';
+import { tickIntel, buySurvey, intelLevel, surveyCost, fuzzRate, initialIntel,
+  INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN } from './intel.js';
 
 let parcelSeq = 0;
 let staffSeq = 0;
@@ -50,6 +53,7 @@ export function startGame(seedText, opts = {}) {
 // ------------------------------------------------------------------ derived state
 
 export function refresh(s) {
+  if (!s.intel) s.intel = initialIntel();
   s.macro = macroAt(s.month);
   if (s.demandOverride) s.macro.demand *= s.demandOverride;
   s.macro.demand *= clamp(s.bizConfidence, 0.7, 1.3);
@@ -387,6 +391,57 @@ export function repayLoan(s, loanId, amount) {
   return { ok: true, quote: q, released };
 }
 
+/** Quote a lease rental discounting facility against one leased asset. */
+/** Commission a survey of one locality. */
+export function commissionSurvey(s, locId) {
+  const r = buySurvey(s, locId);
+  if (r.ok) {
+    s.news.push({
+      m: s.month, tag: 'MARKET', head: `Survey commissioned: ${BY_ID[locId].name}`,
+      body: `${money(r.cost)} to a man who will walk the survey numbers, sit with the village revenue officer and find out what has actually registered rather than what is being asked. Good for about two years before it goes stale.`,
+    });
+  }
+  return r;
+}
+
+export function quoteLRD(s, assetId) {
+  const a = s.assets.find((x) => x.id === assetId);
+  if (!a) return null;
+  return lrdQuote(s, a, assetValue(a, s));
+}
+
+/**
+ * Draw down against a lease. The rent is assigned to the lender, so the asset is charged
+ * and the instalment is fixed whatever the building does afterwards.
+ */
+export function takeLRD(s, assetId, amount) {
+  const a = s.assets.find((x) => x.id === assetId);
+  if (!a) return { ok: false, msg: 'Not found.' };
+  const q = lrdQuote(s, a, assetValue(a, s));
+  if (!q.eligible) return { ok: false, msg: q.reasons[0] || 'Not eligible.' };
+  const draw = Math.min(Math.max(100000, Math.floor(amount / 10000) * 10000), q.amount);
+
+  const lender = {
+    id: 'lrd', name: q.proper ? 'Lease rental discounting facility' : 'Loan against property',
+    kind: 'bank', spread: 0,
+  };
+  const loan = takeLoan(s, lender, draw, q.rate, q.tenure, { collateral: [assetId] });
+  loan.lrd = true;
+  loan.assetId = assetId;
+  a.pledged = true;
+
+  s.relations.banks = clamp(s.relations.banks + 5, 0, 100);
+  s.relations.investors = clamp(s.relations.investors + 3, 0, 100);
+  s.news.push({
+    m: s.month, tag: 'FINANCE',
+    head: `${money(draw)} raised against the lease at ${a.name}`,
+    body: `${(q.rate * 100).toFixed(2)} per cent over ${q.tenure} months — ${q.proper ? 'two to three points inside what the same bank would charge you to build something' : 'a crude loan against property, which is the best this market offers yet'}. `
+      + `The rent is assigned directly to the lender and the instalment is ${money(loan.emi)} a month whatever happens to the building. `
+      + `Cover today is ${q.dscr.toFixed(2)} times. You still own the asset, and the money buys the next one.`,
+  });
+  return { ok: true, quote: q, amount: draw, loan };
+}
+
 export function sellParcel(s, parcelId, factor = 1) {
   const p = s.parcels.find((x) => x.id === parcelId);
   if (!p) return { ok: false, msg: 'Not found.' };
@@ -416,7 +471,12 @@ export function sellParcel(s, parcelId, factor = 1) {
 export function sellAsset(s, assetId, factor = 1) {
   const a = s.assets.find((x) => x.id === assetId);
   if (!a) return { ok: false, msg: 'Not found.' };
-  if (a.pledged) return { ok: false, msg: 'Pledged to a lender.' };
+  if (a.pledged) {
+    const l = s.loans.find((x) => x.assetId === assetId);
+    return { ok: false, msg: l
+      ? `This building secures ${money(l.outstanding)} of lease rental discounting. Repay that facility before you can sell it.`
+      : 'Pledged to a lender.' };
+  }
   const v = Math.round(assetValue(a, s) * factor * 0.97);
   s.cash += v;
   s.assets = s.assets.filter((x) => x.id !== assetId);
@@ -1094,8 +1154,9 @@ export function advanceMonth(s) {
   s.stress = clamp(s.stress + load * 1.1 - relief - 2 + (s.cash < 0 ? 5 : 0), 0, 100);
   s.reputation = clamp(s.reputation + (s.stats.projectsDone > 0 ? 0.16 : 0.02) + (s.ratios.occupancy > 0.8 ? 0.08 : 0) - (s.flags.npa ? 0.25 : 0) - (s.payables > 0 ? 0.1 : 0), 0, 100);
 
-  // 8b. Regularisation applications grind on.
+  // 8b. Regularisation applications grind on, and what you know changes.
   tickRegularisations(s, rng);
+  tickIntel(s, rng);
 
   // 9. Market and rivals.
   refreshOffers(s, rng);
@@ -1157,7 +1218,8 @@ function checkEnd(s) {
 
 export {
   abandonProject, remainingCommitments, fundingSchedule, freeSqYd, landConsumedBy,
-  estimateLayout, isLayout, plotPrice, plotAbsorption,
+  estimateLayout, isLayout, plotPrice, plotAbsorption, lrdAvailable,
+  intelLevel, surveyCost, fuzzRate, INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN,
   quotePrepayment, prepaymentPenaltyRate, remainingTenure, interestIfHeld,
   marketView, landRate, rentRate, salePrice, capRate, costIndex, dutyRate, salaryIndex,
   farFor, estimateProject, maxBuildableSqFt, assetValue, portfolioNoiAnnual,

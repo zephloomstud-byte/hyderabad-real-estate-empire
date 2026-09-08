@@ -16,8 +16,10 @@ import {
   repayLoan, quotePrepayment, remainingTenure, interestIfHeld, brokerDeal, startGame,
   estimateLayout, isLayout, plotPrice,
   applyForRegularisation, regularisationQuote, lrsWindow,
+  quoteLRD, takeLRD, lrdAvailable,
+  commissionSurvey, intelLevel, surveyCost, INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN,
 } from '../sim/engine.js';
-import { materialPrice, wage } from '../sim/market.js';
+import { materialPrice, wage, fuzzRate } from '../sim/market.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -252,8 +254,9 @@ views.deals = () => {
     Every rupee of land you buy costs ${pct(1 + dutyRate(S.month), 1)} of the price. Investigate before you commit — the cheap ones are cheap for a reason.</span></div>
     <div class="grid g2">
     ${S.offers.map((o) => {
+      const lvl = intelLevel(S, o.locality);
       const fair = o.kind === 'land' || o.kind === 'devagreement' ? landRate(o.locality, S.month, S) * o.areaSqYd : o.price;
-      const disc = o.kind === 'devagreement' ? null : 1 - (o.negotiatedPrice ?? o.price) / Math.max(1, fair);
+      const disc = (o.kind === 'devagreement' || lvl !== INTEL_KNOWN) ? null : 1 - (o.negotiatedPrice ?? o.price) / Math.max(1, fair);
       return `<div class="card">
         <div class="spread"><h3 style="border:0;padding:0;margin:0">${esc(o.localityName)}</h3>
           <span class="pill ${o.kind === 'devagreement' ? 'gold' : o.kind === 'asset' ? 'good' : ''}">${o.kind === 'devagreement' ? 'Development agreement' : o.kind === 'asset' ? 'Income asset' : 'Land'}</span></div>
@@ -263,7 +266,9 @@ views.deals = () => {
         ${o.kind === 'devagreement'
           ? row('Owner’s share of built area', pct(o.ownerShare, 0)) + row('Refundable advance', money(o.advance)) + row('Land cost to you', 'Nil')
           : row('Asking', money(o.negotiatedPrice ?? o.price)) + (o.askRate ? row('Rate', '₹' + num(o.askRate) + ' / sq yd') : '') +
-            (disc !== null ? row('Versus market', (disc > 0 ? '−' : '+') + pct(Math.abs(disc)) + (disc > 0.15 ? ' — suspiciously cheap' : '')) : '')}
+            (disc !== null ? row('Versus market', (disc > 0 ? '−' : '+') + pct(Math.abs(disc)) + (disc > 0.15 ? ' — suspiciously cheap' : ''))
+              : lvl === INTEL_HEARSAY ? row('Versus market', '<span class="muted">Only hearsay on this area</span>')
+              : row('Versus market', '<span class="muted">You have never been here</span>'))}
         ${o.kind === 'asset' ? row('In-place NOI', money(o.noi) + ' p.a.') + row('Occupancy', pct(o.occupancy)) : ''}
         ${row('Registration & duty', money(Math.round((o.negotiatedPrice ?? o.price) * dutyRate(S.month))))}
         ${row('Seller', esc(o.seller) + (o.motive ? ` · ${esc(o.motive)}` : ''))}
@@ -363,7 +368,7 @@ views.portfolio = () => `<div class="stack">
       <td class="n">${money((a.lastNoi || 0) * 12)}</td>
       <td class="n">${pct(capRate(a.use, S.month, S))}</td>
       <td class="n">${money(assetValue(a, S))}</td>
-      <td class="n"><button class="btn sm ghost" data-sellasset="${a.id}">Sell</button></td>
+      <td class="n">${lrdAvailable(S) && !a.pledged && a.use !== 'res' ? `<button class="btn sm" data-lrd="${a.id}">Borrow against lease</button> ` : ''}<button class="btn sm ghost" data-sellasset="${a.id}">Sell</button></td>
     </tr>`).join('')}
   </table>
   <div class="small muted" style="margin-top:8px">Total rental NOI ${money(portfolioNoiAnnual(S))} a year on a book cost of
@@ -411,7 +416,7 @@ views.finance = () => {
         const left = remainingTenure(l);
         const owed = interestIfHeld(l);
         return `<tr>
-        <td>${esc(l.lender)}${l.secret ? '<div class="small muted">Against your mother’s gold.</div>' : ''}${l.prepaid ? `<div class="small muted">${money(l.prepaid)} prepaid</div>` : ''}</td>
+        <td>${esc(l.lender)}${l.secret ? '<div class="small muted">Against your mother’s gold.</div>' : ''}${l.lrd ? `<div class="small muted">Secured on the rent from ${esc((S.assets.find((a) => a.id === l.assetId) || {}).name || 'a let building')}</div>` : ''}${l.prepaid ? `<div class="small muted">${money(l.prepaid)} prepaid</div>` : ''}</td>
         <td class="n">${money(l.principal)}</td><td class="n">${money(l.outstanding)}</td>
         <td class="n ${l.rate > 0.2 ? 'neg' : ''}">${pct(l.rate, 2)}</td><td class="n">${money(l.emi)}</td>
         <td class="n">${Number.isFinite(left) ? left + ' mo' : 'never'}</td>
@@ -487,19 +492,26 @@ views.market = () => {
     </div>
 
     <div class="card"><h3>Land and rent by locality — ${dateLabel(S.month)}</h3><table>
-      <tr><th>Locality</th><th class="n">₹ / sq yd</th><th class="n">per acre</th><th class="n">12-mo</th><th class="n">Resi rent</th><th class="n">Office rent</th><th class="n">FAR</th><th>Character</th></tr>
-      ${mv.sort((a, b) => b.rate - a.rate).map((l) => `<tr>
-        <td><b>${esc(l.name)}</b>${l.obscure ? ' <span class="pill">Off the map</span>' : ''}</td>
-        <td class="n">₹${num(l.rate)}</td>
-        <td class="n">${money(l.perAcre)}</td>
-        <td class="n ${l.yoy > 0 ? 'pos' : l.yoy < 0 ? 'neg' : ''}">${pct(l.yoy)}</td>
+      <tr><th>Locality</th><th class="n">₹ / sq yd</th><th class="n">per acre</th><th class="n">12-mo</th><th class="n">Resi rent</th><th class="n">Office rent</th><th class="n">FAR</th><th>What you know</th></tr>
+      ${mv.sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1)).map((l) => `<tr>
+        <td><b>${esc(l.name)}</b>
+          <div class="small muted">${esc(l.desc)}</div></td>
+        <td class="n">${l.rate === null ? '<span class="muted">—</span>'
+          : l.level === INTEL_HEARSAY ? `<span title="A broker's ballpark, and brokers are wrong">≈₹${num(l.rate)}</span>` : '₹' + num(l.rate)}</td>
+        <td class="n">${l.perAcre === null ? '<span class="muted">—</span>' : (l.level === INTEL_HEARSAY ? '≈' : '') + money(l.perAcre)}</td>
+        <td class="n ${l.yoy > 0 ? 'pos' : l.yoy < 0 ? 'neg' : ''}">${l.yoy === null ? '—' : pct(l.yoy)}</td>
         <td class="n">${l.resRent ? '₹' + l.resRent.toFixed(1) : '—'}</td>
         <td class="n">${l.officeRent ? '₹' + l.officeRent.toFixed(1) : '—'}</td>
-        <td class="n">${l.far.toFixed(2)}</td>
-        <td class="small muted">${esc(l.desc)}</td>
+        <td class="n">${l.far === null ? '—' : l.far.toFixed(2)}</td>
+        <td>${l.level === INTEL_KNOWN ? '<span class="pill good">Known</span>'
+          : `<span class="pill ${l.level === INTEL_NONE ? 'warn' : ''}">${l.level === INTEL_NONE ? 'Never been' : 'Hearsay ±25%'}</span>
+             <div style="margin-top:5px"><button class="btn sm ghost" data-survey="${l.id}" ${S.cash < l.surveyCost ? 'disabled' : ''}>Survey · ${money(l.surveyCost)}</button></div>`}</td>
       </tr>`).join('')}
     </table>
-    <div class="small muted" style="margin-top:8px">Rents are per square foot per month. Floor area ratio is what you may build on a well-served plot today.
+    <div class="small muted" style="margin-top:8px">You know your own patch and the fashionable parts of the city. The villages to the west you have never been to,
+    and a broker's ballpark on somewhere you have not walked is wrong by up to a quarter in either direction.
+    A survey buys you two years of real numbers. Owning anything somewhere teaches you it for nothing, and word travels
+    if the right people owe you a conversation.<br>
     Nothing on this page tells you where the city is going next. That is the job.</div>
     </div>
 
@@ -606,6 +618,15 @@ function bindView() {
   v.querySelectorAll('[data-sellland]').forEach((b) => {
     b.onclick = () => { const r = sellParcel(S, b.dataset.sellland); say(r.ok ? `Sold for ${money(r.net)} — a ${r.gain >= 0 ? 'gain' : 'loss'} of ${money(Math.abs(r.gain))}.` : r.msg); refresh(S); saveGame(S); render(); };
   });
+  v.querySelectorAll('[data-survey]').forEach((b) => {
+    b.onclick = () => {
+      const id = b.dataset.survey;
+      const r = commissionSurvey(S, id);
+      say(r.ok ? `Survey commissioned. ${money(r.cost)}. Real numbers, good for about two years.` : r.msg);
+      refresh(S); saveGame(S); render();
+    };
+  });
+  v.querySelectorAll('[data-lrd]').forEach((b) => { b.onclick = () => showLRD(b.dataset.lrd); });
   v.querySelectorAll('[data-sellasset]').forEach((b) => {
     b.onclick = () => { const r = sellAsset(S, b.dataset.sellasset); say(r.ok ? `Sold for ${money(r.net)}.` : r.msg); refresh(S); saveGame(S); render(); };
   });
@@ -733,6 +754,18 @@ function showEvent() {
   });
 }
 
+/** What you can honestly say about the going rate somewhere, given what you know. */
+function marketRateLine(locId) {
+  const lvl = intelLevel(S, locId);
+  const truth = landRate(locId, S.month, S);
+  if (lvl === INTEL_KNOWN) return '₹' + num(Math.round(truth)) + ' / sq yd';
+  if (lvl === INTEL_HEARSAY) {
+    const f = fuzzRate(S, locId, truth);
+    return `<span class="muted">about ₹${num(Math.round(f.value))} — hearsay, could be a quarter out</span>`;
+  }
+  return '<span class="muted">You do not know. Nobody has walked this for you.</span>';
+}
+
 function doBroker(id) {
   const o = S.offers.find((x) => x.id === id);
   if (!o) return;
@@ -778,7 +811,7 @@ function showDeal(id) {
           ${o.kind === 'devagreement'
             ? row('Owner keeps', pct(o.ownerShare, 0) + ' of built area') + row('Refundable advance', money(o.advance)) + row('Land cost', 'Nil')
             : row('Asking price', money(price)) + (o.askRate ? row('Rate', '₹' + num(o.askRate) + ' / sq yd') : '') +
-              row('Market rate today', '₹' + num(Math.round(landRate(o.locality, S.month, S))) + ' / sq yd') +
+              row('Market rate today', marketRateLine(o.locality)) +
               row('Stamp & registration', money(duty)) + row('Legal', money(legal)) +
               row('Total cash required', money(price + duty + legal), 'total')}
           ${o.kind === 'asset' ? row('In-place NOI', money(o.noi) + ' p.a.') + row('Implied yield', pct(o.noi / Math.max(1, price))) + row('Occupancy', pct(o.occupancy)) : ''}
@@ -1043,6 +1076,65 @@ function showLoan(lenderId) {
         <div class="small muted" style="margin-top:6px">${(d?.reasons || ['The proposal does not meet lending norms.']).map(esc).join(' ')}</div></div>`;
       refresh(S); saveGame(S);
       if (r.ok) setTimeout(() => { closeModal(); render(); }, 2600);
+    };
+  });
+}
+
+function showLRD(assetId) {
+  const a = S.assets.find((x) => x.id === assetId);
+  if (!a) return;
+  const q = quoteLRD(S, assetId);
+  if (!q.eligible) {
+    return openModal(`<div class="modal" style="max-width:520px">
+      <div class="head"><div class="cat">Lease rental discounting</div><h2>${esc(a.name)}</h2></div>
+      <div class="body"><p>The lender will not discount this lease.</p>
+      ${q.reasons.map((r) => `<div class="row"><span class="l">▲ ${esc(r)}</span></div>`).join('')}</div>
+      <div class="foot"><div class="inline"><button class="btn ghost" id="close">Understood</button></div></div>
+    </div>`, (rootEl) => { $('#close', rootEl).onclick = () => { closeModal(); render(); }; });
+  }
+
+  const draw = () => {
+    const amt = Number($('#lamt').value) || 0;
+    const capped = Math.min(amt, q.amount);
+    const share = capped / Math.max(1, q.amount);
+    const emi = q.emi * share;
+    const cover = emi > 0 ? (q.noiAnnual / 12) / emi : 0;
+    $('#lquote').innerHTML = `
+      ${row('Amount drawn', money(capped))}
+      ${row('Monthly instalment', money(emi))}
+      ${row('Rent this building produces', money(q.noiAnnual / 12) + ' a month')}
+      ${row('Cover on the instalment', cover.toFixed(2) + 'x', cover < 1.2 ? 'total' : '')}
+      ${cover < 1.2 ? '<div class="small neg" style="padding:6px 0">Thin. One tenant leaving and you are paying this out of your own pocket.</div>' : ''}
+      ${row('Cash afterwards', money(S.cash + capped), 'total')}`;
+  };
+
+  openModal(`<div class="modal" style="max-width:600px">
+    <div class="head"><div class="cat">${q.proper ? 'Lease rental discounting' : 'Loan against property'} · ${dateLabel(S.month)}</div><h2>${esc(a.name)}</h2></div>
+    <div class="body">
+      <p class="small muted">You are not borrowing against the building. You are borrowing against the rent your tenant has contracted to pay, and the lender takes that rent directly. Because the security is a covenant rather than concrete, it prices inside development finance and runs far longer.${q.proper ? '' : ' The proper product does not exist yet; this is a crude loan against property on worse terms, which is what this market offers today.'}</p>
+      ${row('Asset value', money(assetValue(a, S)))}
+      ${row('Occupancy', pct(a.occupancy) + (a.anchor ? ' · anchor tenant on a long lease' : ''))}
+      ${row('Net income', money(q.noiAnnual) + ' a year')}
+      ${row('Maximum the lender will advance', money(q.amount) + ' — ' + pct(q.ltv, 0) + ' of value')}
+      ${row('Rate', pct(q.rate, 2) + ' for ' + q.tenure + ' months')}
+      <label class="stack" style="gap:4px;margin-top:14px"><span class="small muted">Amount to draw</span>
+        <input id="lamt" type="number" value="${q.amount}" min="100000" max="${q.amount}" step="100000"></label>
+      <div class="card tight" style="margin-top:14px" id="lquote"></div>
+      <p class="small muted" style="margin-top:12px">The instalment is fixed and the rent is not. If the tenant leaves you still owe the bank, and the building that was financing your growth starts consuming it. That is the whole risk, and it is how a great many landlords have been undone.</p>
+    </div>
+    <div class="foot"><div class="inline">
+      <button class="btn" id="lgo">Draw the facility</button>
+      <button class="btn ghost" id="lclose">Leave it unencumbered</button>
+    </div></div>
+  </div>`, (rootEl) => {
+    $('#lamt', rootEl).oninput = draw;
+    draw();
+    $('#lclose', rootEl).onclick = () => { closeModal(); render(); };
+    $('#lgo', rootEl).onclick = () => {
+      const r = takeLRD(S, assetId, Number($('#lamt', rootEl).value));
+      if (!r.ok) return say(r.msg);
+      say(`${money(r.amount)} drawn against the lease. The building is now charged.`);
+      refresh(S); saveGame(S); closeModal(); render();
     };
   });
 }
