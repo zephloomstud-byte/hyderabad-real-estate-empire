@@ -1094,6 +1094,9 @@ export function advanceMonth(s) {
   s.stress = clamp(s.stress + load * 1.1 - relief - 2 + (s.cash < 0 ? 5 : 0), 0, 100);
   s.reputation = clamp(s.reputation + (s.stats.projectsDone > 0 ? 0.16 : 0.02) + (s.ratios.occupancy > 0.8 ? 0.08 : 0) - (s.flags.npa ? 0.25 : 0) - (s.payables > 0 ? 0.1 : 0), 0, 100);
 
+  // 8b. Regularisation applications grind on.
+  tickRegularisations(s, rng);
+
   // 9. Market and rivals.
   refreshOffers(s, rng);
   tickCompetitors(s, rng);
@@ -1160,3 +1163,134 @@ export {
   farFor, estimateProject, maxBuildableSqFt, assetValue, portfolioNoiAnnual,
   balanceSheet, computeRatios, availableLenders, offeredRate, creditDecision, landValue,
 };
+
+// ------------------------------------------------------------------ regularisation
+
+/**
+ * Layout Regularisation Scheme windows. The state periodically threw open an amnesty:
+ * unapproved layouts and deviated buildings could be regularised on payment of fees and
+ * an open-space contribution, without the years of argument it normally took. Andhra
+ * Pradesh ran LRS and BPS together in 2008; Telangana reopened LRS in 2015.
+ *
+ * Outside a window regularisation is still possible — it is simply slow, dear and far
+ * from certain, because you are asking one officer to exercise discretion rather than
+ * applying under a scheme. A player who buys unapproved land cheaply and sits on it
+ * until an amnesty opens is doing something people genuinely did.
+ */
+export const LRS_WINDOWS = [
+  { from: 156, to: 168, name: 'LRS / BPS 2008' },   // Jan 2008 - Dec 2008, Andhra Pradesh
+  { from: 246, to: 258, name: 'LRS 2015' },         // Jul 2015 - Jun 2016, Telangana
+];
+
+export function lrsWindow(m) {
+  return LRS_WINDOWS.find((w) => m >= w.from && m <= w.to) || null;
+}
+
+const REGULARISABLE = ['LAYOUT_UNAPPROVED', 'MUNICIPAL_DEVIATION', 'NO_ACCESS'];
+
+/** What it would cost and how long it would take to regularise a given holding. */
+export function regularisationQuote(s, target) {
+  const win = lrsWindow(s.month);
+  const isParcel = target.kind === 'parcel';
+  const base = isParcel
+    ? landRate(target.locality, s.month, s) * target.areaSqYd
+    : target.remaining * target.askPerSqFt;
+
+  // Relationships and a liaison man matter far more when there is no scheme to apply under.
+  const pull = clamp(
+    s.relations.bureaucrats / 200 + s.relations.politicians / 320
+    + (s.staff.some((x) => x.impact === 'approvals') ? 0.14 : 0)
+    + (s.staff.some((x) => x.impact === 'legal') ? 0.08 : 0),
+    0, 0.5,
+  );
+
+  const feeRate = win ? 0.24 : 0.34;                       // fees plus open-space charges
+  const cost = Math.round(base * feeRate);
+  const months = win
+    ? Math.max(3, Math.round(7 - pull * 6))
+    : Math.max(8, Math.round(19 - pull * 14));
+  const chance = clamp(win ? 0.88 + pull * 0.2 : 0.34 + pull * 0.9, 0.2, 0.97);
+
+  return { window: win, cost, months, chance, feeRate, base };
+}
+
+/**
+ * Apply to regularise. The money goes now; the outcome arrives months later, and
+ * outside an amnesty window it may not arrive at all.
+ */
+export function applyForRegularisation(s, kind, id) {
+  const target = kind === 'parcel'
+    ? s.parcels.find((p) => p.id === id && p.owned)
+    : s.inventory.find((i) => i.id === id);
+  if (!target) return { ok: false, msg: 'Not found.' };
+  if (target.regularising) return { ok: false, msg: 'An application is already pending on this.' };
+
+  const defects = kind === 'parcel'
+    ? (target.known || []).filter((d) => REGULARISABLE.includes(d) && !(target.resolved || []).includes(d))
+    : (target.unapproved ? ['LAYOUT_UNAPPROVED'] : []);
+  if (!defects.length) return { ok: false, msg: 'There is nothing here that regularisation would fix.' };
+
+  const q = regularisationQuote(s, { kind, ...target });
+  if (s.cash < q.cost) return { ok: false, msg: `The fees and open-space charges come to ${money(q.cost)} and you have ${money(s.cash)}.` };
+
+  pay(s, q.cost);
+  target.regularising = { kind, defects, monthsLeft: q.months, chance: q.chance, cost: q.cost, applied: s.month, window: q.window ? q.window.name : null };
+  s.regularisations = s.regularisations || [];
+  s.regularisations.push({ kind, id });
+  s.ledger.push({ m: s.month, type: 'Regularisation fees', amount: -q.cost, note: target.label || target.name });
+  s.news.push({
+    m: s.month, tag: 'REGULATION', head: `Regularisation applied for: ${target.label || target.name}`,
+    body: q.window
+      ? `Filed under ${q.window.name}. Fees and open-space contribution of ${money(q.cost)} paid. Expect an answer in about ${q.months} months, and under a scheme the answer is usually yes.`
+      : `No scheme is open, so this is an ordinary application asking an officer to exercise discretion. ${money(q.cost)} paid in charges and consultants' fees. Expect ${q.months} months and roughly a ${Math.round(q.chance * 100)} per cent chance of anything at all.`,
+  });
+  return { ok: true, quote: q };
+}
+
+/** Advance pending regularisation applications by one month. */
+export function tickRegularisations(s, rng) {
+  if (!s.regularisations || !s.regularisations.length) return;
+  const still = [];
+  for (const ref of s.regularisations) {
+    const t = ref.kind === 'parcel'
+      ? s.parcels.find((p) => p.id === ref.id)
+      : s.inventory.find((i) => i.id === ref.id);
+    if (!t || !t.regularising) continue;
+    t.regularising.monthsLeft -= 1;
+    if (t.regularising.monthsLeft > 0) { still.push(ref); continue; }
+
+    const granted = rng.f() < t.regularising.chance;
+    if (granted) {
+      if (ref.kind === 'parcel') {
+        t.resolved = t.resolved || [];
+        for (const d of t.regularising.defects) if (!t.resolved.includes(d)) t.resolved.push(d);
+      } else {
+        // Plots that were selling as an unapproved venture are now sanctioned stock.
+        const wasRate = t.askPerSqFt;
+        t.unapproved = false;
+        t.type = 'approved';
+        t.askPerSqFt = plotPrice(t.locality, 'approved', s.month, s);
+        s.news.push({
+          m: s.month, tag: 'REGULATION', head: `${t.name} regularised`,
+          body: `Sanctioned at last. The unsold plots re-rate from about ₹${Math.round(wasRate).toLocaleString('en-IN')} to ₹${Math.round(t.askPerSqFt).toLocaleString('en-IN')} a square yard, and buyers who would not touch it before will now take a loan against it.`,
+        });
+      }
+      s.reputation = clamp(s.reputation + 2, 0, 100);
+      s.relations.bureaucrats = clamp(s.relations.bureaucrats + 4, 0, 100);
+      if (ref.kind === 'parcel') {
+        s.news.push({
+          m: s.month, tag: 'REGULATION', head: `${t.label} regularised`,
+          body: 'The proceedings are issued and the defect is off the title. The land is now bankable, saleable and buildable.',
+        });
+      }
+    } else {
+      s.news.push({
+        m: s.month, tag: 'REGULATION', head: `Regularisation refused: ${t.label || t.name}`,
+        body: 'The application has been returned. The fees are not. You may apply again, and you will pay again.',
+      });
+      s.relations.bureaucrats = clamp(s.relations.bureaucrats - 2, 0, 100);
+    }
+    t.regularising = null;
+  }
+  s.regularisations = still;
+}

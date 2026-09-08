@@ -166,6 +166,16 @@ export const TIMELINE = [
     effect: { unlock: 'AIRPORT_LIVE', farRelax: ['begumpet', 'somajiguda', 'ameerpet', 'secunderabad'] },
   },
   {
+    m: 156, tag: 'REGULATION', head: 'State opens LRS and BPS: an amnesty for unapproved layouts',
+    body: 'January 2008. The Layout Regularisation Scheme and the Building Penalisation Scheme open together. Unapproved layouts and deviated buildings can be regularised on payment of fees and an open-space contribution, without the years of argument it normally takes. Every venture developer in the state is queueing at the development authority.',
+    effect: { unlock: 'LRS_2008' },
+  },
+  {
+    m: 246, tag: 'REGULATION', head: 'Telangana reopens the Layout Regularisation Scheme',
+    body: 'July 2015. The new state reopens LRS. Anything unapproved that has been sitting unsold since the last amnesty can be brought onto the record, and plots that no bank would lend against become mortgageable overnight.',
+    effect: { unlock: 'LRS_2015' },
+  },
+  {
     m: 164, tag: 'ECONOMY', head: 'Lehman Brothers collapses; global credit freezes',
     body: 'September 2008. Indian banks stop disbursing to developers overnight. Buyers vanish. Several Hyderabad builders who bought land at 2007 prices on three-per-cent-a-month money are now insolvent and do not know it yet.',
     effect: { crash: true },

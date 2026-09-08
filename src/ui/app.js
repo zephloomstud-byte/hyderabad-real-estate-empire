@@ -15,6 +15,7 @@ import {
   abandonProject, remainingCommitments, freeSqYd,
   repayLoan, quotePrepayment, remainingTenure, interestIfHeld, brokerDeal, startGame,
   estimateLayout, isLayout, plotPrice,
+  applyForRegularisation, regularisationQuote, lrsWindow,
 } from '../sim/engine.js';
 import { materialPrice, wage } from '../sim/market.js';
 
@@ -277,10 +278,20 @@ views.deals = () => {
     </div></div>`;
 };
 
+function lrsBanner() {
+  const w = lrsWindow(S.month);
+  if (!w) return '';
+  return `<div class="card tight" style="border-left:3px solid var(--gold)"><span class="small">
+    <b>${esc(w.name)} is open.</b> Unapproved layouts and sanctioned-plan deviations can be regularised on payment of fees and an
+    open-space contribution — about ${pct(0.24, 0)} of value, in roughly seven months, and under a scheme the answer is usually yes.
+    Outside a window the same application costs half again as much, takes eighteen months and fails more often than it succeeds.
+    Windows do not stay open.</span></div>`;
+}
+
 views.land = () => {
   const owned = S.parcels.filter((p) => p.owned && !p.consumed);
-  if (!owned.length) return emptyCard('You own no land. The deal desk is where that changes.');
-  return `<div class="card"><h3>Land bank</h3><table>
+  if (!owned.length) return lrsBanner() + emptyCard('You own no land. The deal desk is where that changes.');
+  return lrsBanner() + `<div class="card" style="margin-top:14px"><h3>Land bank</h3><table>
     <tr><th>Parcel</th><th class="n">Area</th><th class="n">Cost</th><th class="n">Market today</th><th class="n">Gain</th><th>Status</th><th></th></tr>
     ${owned.map((p) => {
       const mkt = landRate(p.locality, S.month, S) * p.areaSqYd;
@@ -292,6 +303,7 @@ views.land = () => {
       if (p.pledged) flags.push('<span class="pill warn">Pledged</span>');
       if (p.devAgreement) flags.push(`<span class="pill gold">Owner keeps ${pct(p.devAgreement.ownerShare, 0)}</span>`);
       for (const d of p.known) if (!(p.resolved || []).includes(d)) flags.push(`<span class="pill warn" title="${esc(DEFECTS[d].desc)}">${esc(DEFECTS[d].name)}</span>`);
+      if (p.regularising) flags.push(`<span class="pill gold">Regularisation pending — ${p.regularising.monthsLeft} mo</span>`);
       return `<tr>
         <td><b>${esc(p.label)}</b><div class="small muted">Bought ${dateLabel(p.purchased)} from ${esc(p.seller || '—')}</div></td>
         <td class="n">${num(p.areaSqYd)} sq yd<div class="small muted">${(p.areaSqYd / SQYD_PER_ACRE).toFixed(2)} ac${p.usedSqYd ? ` · ${num(freeSqYd(p))} sq yd free` : ''}</div></td>
@@ -299,7 +311,7 @@ views.land = () => {
         <td class="n">${money(mkt)}</td>
         <td class="n ${gain >= 0 ? 'pos' : 'neg'}">${money(gain, { sign: true })}<div class="small muted">${yrs >= 1 ? pct(cagr) + ' p.a.' : 'held ' + (S.month - p.purchased) + ' mo'}</div></td>
         <td>${flags.join(' ') || '<span class="pill good">Clear</span>'}</td>
-        <td class="n">${maxBuildableSqFt(p, S) >= 3000 ? `<button class="btn sm" data-build="${p.id}">Build</button> ` : ''}${!p.usedSqYd ? `<button class="btn sm ghost" data-sellland="${p.id}">Sell</button>` : ''}</td>
+        <td class="n">${maxBuildableSqFt(p, S) >= 3000 ? `<button class="btn sm" data-build="${p.id}">Build</button> ` : ''}${!p.usedSqYd ? `<button class="btn sm ghost" data-sellland="${p.id}">Sell</button>` : ''}${canRegularise(p) ? ` <button class="btn sm ghost" data-reg="parcel:${p.id}">Regularise</button>` : ''}</td>
       </tr>`;
     }).join('')}
   </table></div>`;
@@ -340,6 +352,7 @@ views.projects = () => {
 };
 
 views.portfolio = () => `<div class="stack">
+  ${S.inventory.some((i) => i.unapproved) ? lrsBanner() : ''}
   ${S.assets.length ? `<div class="card"><h3>Income-producing assets</h3><table>
     <tr><th>Asset</th><th class="n">Area</th><th class="n">Rent</th><th class="n">Occupancy</th><th class="n">NOI p.a.</th><th class="n">Cap rate</th><th class="n">Value</th><th></th></tr>
     ${S.assets.map((a) => `<tr>
@@ -368,7 +381,9 @@ views.portfolio = () => `<div class="stack">
       <td class="n">₹${Math.round(mkt)}</td>
       <td class="n">${money(i.remaining * i.askPerSqFt)}</td>
       <td><input type="range" min="60" max="140" value="${Math.round((i.askPerSqFt / mkt) * 100)}" data-ask="${i.id}" data-mkt="${mkt}">
-        <div class="small muted">${Math.round((i.askPerSqFt / mkt) * 100)}% of market</div></td></tr>`;
+        <div class="small muted">${Math.round((i.askPerSqFt / mkt) * 100)}% of market</div>
+        ${i.regularising ? `<div class="small"><span class="pill gold">Regularisation pending — ${i.regularising.monthsLeft} mo</span></div>`
+          : i.unapproved ? `<button class="btn sm ghost" style="margin-top:6px" data-reg="inventory:${i.id}">Regularise</button>` : ''}</td></tr>`;
     }).join('')}
   </table><div class="small muted" style="margin-top:8px">Pricing above market slows absorption sharply. Ageing stock loses pricing power on its own.</div></div>` : ''}
 
@@ -536,6 +551,12 @@ const emptyCard = (t) => `<div class="card center muted" style="padding:36px 20p
 const newsItem = (n) => `<div class="news-item ${n.major ? 'major' : ''}">
   <div class="meta">${dateLabel(n.m)} · ${esc(n.tag)}</div><h4>${esc(n.head)}</h4>${n.body ? `<p>${esc(n.body)}</p>` : ''}</div>`;
 
+const REGULARISABLE_UI = ['LAYOUT_UNAPPROVED', 'MUNICIPAL_DEVIATION', 'NO_ACCESS'];
+function canRegularise(p) {
+  if (p.regularising) return false;
+  return (p.known || []).some((d) => REGULARISABLE_UI.includes(d) && !(p.resolved || []).includes(d));
+}
+
 function monthlyBurn() {
   const payroll = S.staff.reduce((t, p) => t + p.salary, 0);
   const office = Math.round((3000 + S.staff.length * 2200) * costIndex(S.month));
@@ -587,6 +608,28 @@ function bindView() {
   });
   v.querySelectorAll('[data-sellasset]').forEach((b) => {
     b.onclick = () => { const r = sellAsset(S, b.dataset.sellasset); say(r.ok ? `Sold for ${money(r.net)}.` : r.msg); refresh(S); saveGame(S); render(); };
+  });
+  v.querySelectorAll('[data-reg]').forEach((b) => {
+    b.onclick = () => {
+      const [kind, id] = b.dataset.reg.split(':');
+      const t = kind === 'parcel' ? S.parcels.find((x) => x.id === id) : S.inventory.find((x) => x.id === id);
+      if (!t) return;
+      const q = regularisationQuote(S, { kind, ...t });
+      confirmModal({
+        title: `Apply to regularise ${t.label || t.name}?`,
+        body: (q.window
+          ? `${q.window.name} is open, which is the whole difference. Fees and open-space contribution come to ${money(q.cost)} — about ${pct(q.feeRate, 0)} of value — and an answer should come in roughly ${q.months} months. Under a scheme it is granted about ${pct(q.chance, 0)} of the time.`
+          : `No scheme is open. This is an ordinary application asking an officer to exercise discretion, which costs ${money(q.cost)} in charges and consultants, takes about ${q.months} months, and succeeds roughly ${pct(q.chance, 0)} of the time. Waiting for the next amnesty would be cheaper and far more certain — if one comes, and if you can hold the land that long.`)
+          + `\n\nThe money goes now either way. It is not refunded if the application fails.`,
+        confirmLabel: `Pay ${money(q.cost)} and apply`,
+        danger: !q.window,
+        onConfirm: () => {
+          const r = applyForRegularisation(S, kind, id);
+          say(r.ok ? `Application filed. ${q.months} months for an answer.` : r.msg);
+          refresh(S); saveGame(S); render();
+        },
+      });
+    };
   });
   v.querySelectorAll('[data-abandon]').forEach((b) => {
     b.onclick = () => {
