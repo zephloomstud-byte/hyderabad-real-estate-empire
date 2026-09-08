@@ -1204,12 +1204,21 @@ export function regularisationQuote(s, target) {
     0, 0.5,
   );
 
-  const feeRate = win ? 0.24 : 0.34;                       // fees plus open-space charges
+  // Before the mid-2000s the development authority was a small office in a fast-growing
+  // city, records were on paper, and an unobjectionable layout could be brought onto the
+  // rolls on payment of development charges without much argument. Digitised records and
+  // later RERA made the same application slower, dearer and considerably more sceptical.
+  // This is what fills the long gap between amnesties: in the 1990s you did not need one.
+  const era = clamp(1 - Math.max(0, s.month - 96) / 260, 0.42, 1);
+  const feeRate = win ? 0.24 : 0.34 - era * 0.10;          // fees plus open-space charges
   const cost = Math.round(base * feeRate);
   const months = win
     ? Math.max(3, Math.round(7 - pull * 6))
-    : Math.max(8, Math.round(19 - pull * 14));
-  const chance = clamp(win ? 0.88 + pull * 0.2 : 0.34 + pull * 0.9, 0.2, 0.97);
+    : Math.max(6, Math.round((19 - pull * 14) * (1.25 - era * 0.40)));
+  const chance = clamp(
+    win ? 0.88 + pull * 0.2 : (0.28 + era * 0.34) + pull * 0.9,
+    0.2, 0.97,
+  );
 
   return { window: win, cost, months, chance, feeRate, base };
 }

@@ -3,7 +3,7 @@
 // or realisable value whichever is lower, less every rupee owed.
 
 import { yearOf } from '../core/util.js';
-import { landRate } from './market.js';
+import { landRate, unapprovedPenalty } from './market.js';
 import { assetValue, portfolioNoiAnnual } from './assets.js';
 import { totalDebt } from './finance.js';
 
@@ -16,7 +16,12 @@ export function landValue(s) {
       let haircut = 1;
       for (const d of p.known) {
         if (p.resolved && p.resolved.includes(d)) continue;
-        haircut *= (d === 'ASSIGNED_LAND' ? 0.02 : d === 'WAKF_CLAIM' ? 0.25 : 0.7);
+        if (d === 'ASSIGNED_LAND') haircut *= 0.02;
+        else if (d === 'WAKF_CLAIM') haircut *= 0.25;
+        // Being unapproved cost you little in 1995 and a great deal once buyers
+        // needed a bank behind them.
+        else if (d === 'LAYOUT_UNAPPROVED') haircut *= 0.55 + unapprovedPenalty(s.month).price * 0.45;
+        else haircut *= 0.7;
       }
       return t + gross * haircut * (p.stigma || 1);
     }, 0);

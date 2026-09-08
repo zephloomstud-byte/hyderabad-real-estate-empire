@@ -103,7 +103,12 @@ export function plotPrice(locId, layoutType, m, s) {
   const macro = s ? s.macro : macroAt(m);
   // Investor appetite swings harder than end-user demand in both directions.
   const speculative = clamp(0.55 + macro.demand * 0.55, 0.5, 1.75);
-  return raw * lt.plotMult * speculative;
+  // An unapproved plot is priced off the sanctioned rate, at an era-dependent discount:
+  // large in the mortgage era, modest in 1995 when nobody was borrowing anyway.
+  const mult = lt.unapproved
+    ? LAYOUT_TYPES.approved.plotMult * unapprovedPenalty(m).price
+    : lt.plotMult;
+  return raw * mult * speculative;
 }
 
 /**
@@ -117,7 +122,7 @@ export function plotAbsorption(locId, layoutType, askVsMarket, s) {
   const base = 0.055 * (0.5 + loc.liquidity * 0.7);
   const cycle = Math.pow(clamp(macro.demand, 0.3, 2.0), 2.0);   // more cyclical than flats
   const price = Math.pow(clamp(1 / Math.max(0.5, askVsMarket), 0.3, 2.2), 1.9);
-  const paper = lt.unapproved ? 0.62 : 1.0;
+  const paper = lt.unapproved ? unapprovedPenalty(s.month).absorption : 1.0;
   const rep = 0.80 + clamp(s.reputation, 0, 100) / 170;
   const sales = s.staff.some((x) => x.impact === 'sales') ? 1.25 : 1;
   return clamp(base * cycle * price * paper * rep * sales * (1 + s.absorptionBoost), 0.002, 0.30);
@@ -312,4 +317,39 @@ export function absorptionRate(loc, buildType, askVsMarket, s) {
   const sales = s.staff.some((x) => x.impact === 'sales') ? 1.22 : 1;
   const q = 0.8 + bt.quality * 0.4;
   return clamp(base * cycle * price * rep * sales * q * (1 + s.absorptionBoost), 0.002, 0.30);
+}
+
+/**
+ * How much being unapproved actually hurts, which changed enormously across the period.
+ *
+ * In 1995 almost the whole periphery of Hyderabad was unapproved and it barely mattered.
+ * Buyers paid cash, home loans were rare and expensive, enforcement was thin, and the
+ * development authority was a small office in a growing city. An unapproved plot sold at
+ * a modest discount to a sanctioned one and everybody shrugged.
+ *
+ * What killed the unapproved venture was not enforcement — it was housing finance. Once
+ * banks and HDFC became the normal way people bought property, a plot no bank would lend
+ * against lost most of its buyers overnight. That squeeze runs from roughly 2003, tightens
+ * through the 2000s, and is finished by the RERA era, when a digitised record and a
+ * registered project became the price of entry.
+ *
+ * Returns the fraction of an approved plot's price and absorption that an unapproved one
+ * achieves at this date.
+ */
+const UNAPPROVED_PRICE = [
+  { year: 1995, v: 0.78 }, { year: 2000, v: 0.74 }, { year: 2003, v: 0.68 },
+  { year: 2007, v: 0.58 }, { year: 2010, v: 0.52 }, { year: 2015, v: 0.46 },
+  { year: 2020, v: 0.42 },
+];
+const UNAPPROVED_ABSORPTION = [
+  { year: 1995, v: 0.90 }, { year: 2000, v: 0.85 }, { year: 2003, v: 0.78 },
+  { year: 2007, v: 0.68 }, { year: 2010, v: 0.60 }, { year: 2015, v: 0.52 },
+  { year: 2020, v: 0.46 },
+];
+
+export function unapprovedPenalty(m) {
+  return {
+    price: anchorAt(UNAPPROVED_PRICE, m),
+    absorption: anchorAt(UNAPPROVED_ABSORPTION, m),
+  };
 }
