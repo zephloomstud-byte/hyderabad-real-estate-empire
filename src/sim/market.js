@@ -5,7 +5,7 @@ import { anchorAt, clamp, lerp, yearOf, SQYD_PER_ACRE } from '../core/util.js';
 import { MACRO, SHOCKS, CPI_INDEX, regimeAt } from '../data/history.js';
 import { LOCALITIES, BY_ID, RENT_TRACK, DEFECTS } from '../data/geo.js';
 import { COST_TRACK, DUTY_TRACK, FAR_TRACK, FAR_AIRPORT, MATERIALS, WAGES, WAGE_TRACK,
-  SALARY_TRACK, BUILD_TYPES, TAX_TRACK } from '../data/costs.js';
+  SALARY_TRACK, BUILD_TYPES, LAYOUT_TYPES, TAX_TRACK } from '../data/costs.js';
 import { FIRST_NAMES, SURNAMES } from './state.js';
 
 /** Blend the annual macro series into a monthly reading, applying month-keyed shocks. */
@@ -87,6 +87,40 @@ export function salePrice(locId, buildType, m, s) {
   const margin = clamp(0.48 + (macro.demand - 1) * 0.50, -0.05, 0.95);
   const quality = 0.92 + bt.quality * 0.22;
   return (landPerSqFt + build) * (1 + margin) * quality;
+}
+
+/**
+ * What a developed plot fetches, rupees per square yard. A sanctioned, serviced plot
+ * sells at a large multiple of the raw land rate — that multiple IS the layout
+ * business. Speculative appetite matters more here than for flats, because plots are
+ * bought by investors on a view about where the city is going, not by families who
+ * need somewhere to live this year.
+ */
+export function plotPrice(locId, layoutType, m, s) {
+  const lt = LAYOUT_TYPES[layoutType];
+  if (!lt) return 0;
+  const raw = landRate(locId, m, s);
+  const macro = s ? s.macro : macroAt(m);
+  // Investor appetite swings harder than end-user demand in both directions.
+  const speculative = clamp(0.55 + macro.demand * 0.55, 0.5, 1.75);
+  return raw * lt.plotMult * speculative;
+}
+
+/**
+ * Monthly plot absorption. Plots move on speculation and on whether the buyer believes
+ * the paperwork, so sanction status matters as much as price.
+ */
+export function plotAbsorption(locId, layoutType, askVsMarket, s) {
+  const lt = LAYOUT_TYPES[layoutType];
+  const loc = BY_ID[locId];
+  const macro = s.macro;
+  const base = 0.055 * (0.5 + loc.liquidity * 0.7);
+  const cycle = Math.pow(clamp(macro.demand, 0.3, 2.0), 2.0);   // more cyclical than flats
+  const price = Math.pow(clamp(1 / Math.max(0.5, askVsMarket), 0.3, 2.2), 1.9);
+  const paper = lt.unapproved ? 0.62 : 1.0;
+  const rep = 0.80 + clamp(s.reputation, 0, 100) / 170;
+  const sales = s.staff.some((x) => x.impact === 'sales') ? 1.25 : 1;
+  return clamp(base * cycle * price * paper * rep * sales * (1 + s.absorptionBoost), 0.002, 0.30);
 }
 
 /** Capitalisation rate used to value an income-producing asset. */

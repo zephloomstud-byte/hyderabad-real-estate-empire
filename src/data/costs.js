@@ -171,3 +171,43 @@ export const LENDERS = {
     desc: 'Two and a half to three per cent a month against blank cheques and your personal guarantee. Available when nobody else is. Takes the company if you miss.',
   },
 };
+
+/**
+ * Plotted layouts — "ventures", in the local phrase. Buy agricultural land on the
+ * periphery, get it converted out of agricultural use, get the layout sanctioned, put in
+ * roads, drains, water and power, and sell it off as individual plots by the square yard.
+ *
+ * This was the dominant real-estate business in Andhra Pradesh and it is what most
+ * people with a broker's knowledge and a few lakh rupees actually did. It needs no
+ * contractor, no engineer and no construction expertise; the value comes from
+ * conversion, sanction and infrastructure, not from building anything.
+ *
+ * The trade-off against apartments: far lower capital per acre and no construction risk,
+ * but you sell to investors rather than occupiers, so it only works where somebody
+ * believes the city is coming. Get the corridor wrong and you own a field with roads on it.
+ *
+ * `cost` is rupees per square yard of GROSS site area, January 1995.
+ * `saleable` is the share left after roads, drains and the open space you must surrender.
+ * `plotMult` is what a developed plot fetches against the raw land rate.
+ */
+export const LAYOUT_TYPES = {
+  venture: {
+    id: 'venture', name: 'Unapproved venture', cost: 22, saleable: 0.70, plotMult: 2.2,
+    conversionMonths: 0, approvalMonths: 0, months: 6, minAcres: 1,
+    unapproved: true,
+    desc: 'Murram roads, boundary stones, a painted arch and a broker with a map. No conversion, no sanction. Sells fast and cheap to buyers who are not asking questions, and every plot you sell carries a defect you have passed on to somebody else.',
+  },
+  approved: {
+    id: 'approved', name: 'Approved layout (HUDA / DTCP)', cost: 62, saleable: 0.58, plotMult: 4.0,
+    conversionMonths: 5, approvalMonths: 7, months: 12, minAcres: 2,
+    desc: 'Land conversion out of agricultural use, sanctioned layout, black-top roads, storm drains, water lines, electricity and ten per cent surrendered as open space. Takes two years before a single plot is sold, and the sanction is most of what the buyer is paying for.',
+  },
+  gated: {
+    id: 'gated', name: 'Gated plotted community', cost: 160, saleable: 0.55, plotMult: 5.4,
+    conversionMonths: 5, approvalMonths: 8, months: 18, minAcres: 5,
+    desc: 'Compound wall, gate and security cabin, concrete roads, underground utilities, avenue plantation and a clubhouse. Sells at a serious premium to buyers who want an address rather than an investment, and needs a corridor that has already arrived.',
+  },
+};
+
+/** Statutory cost of taking land out of agricultural use, per square yard. */
+export const CONVERSION_COST_PER_SQYD = 9;

@@ -3,10 +3,11 @@
 // stops and the programme slips while interest keeps running. That single mechanic is
 // the difference between a developer and a man who owns land.
 
-import { clamp } from '../core/util.js';
-import { BUILD_TYPES, APPROVAL_BASE_MONTHS } from '../data/costs.js';
+import { clamp, SQYD_PER_ACRE } from '../core/util.js';
+import { BUILD_TYPES, LAYOUT_TYPES, CONVERSION_COST_PER_SQYD, APPROVAL_BASE_MONTHS } from '../data/costs.js';
 import { BY_ID } from '../data/geo.js';
-import { costIndex, farFor, salePrice, rentRate, capRate, absorptionRate } from './market.js';
+import { costIndex, farFor, salePrice, rentRate, capRate, absorptionRate,
+  landRate, plotPrice, plotAbsorption } from './market.js';
 
 let projSeq = 0;
 let assetSeq = 0;
@@ -64,7 +65,43 @@ export function fundingSchedule(budget, approvalMonths, months) {
   return { monthly: out, cumulative: cum, peak: run, firstYear: cum[Math.min(cum.length - 1, 11)] };
 }
 
+export const isLayout = (typeId) => !!LAYOUT_TYPES[typeId];
+
+/**
+ * Costing a plotted layout. Everything is per square yard of gross site: conversion out
+ * of agricultural use, sanction, then roads, drains, water and power. What is left after
+ * roads and surrendered open space is what you actually have to sell.
+ */
+export function estimateLayout(parcel, typeId, grossSqYd, s) {
+  const lt = LAYOUT_TYPES[typeId];
+  const ci = costIndex(s.month);
+  const conversion = lt.unapproved ? 0 : Math.round(grossSqYd * CONVERSION_COST_PER_SQYD * ci);
+  const works = Math.round(grossSqYd * lt.cost * ci);
+  const budget = conversion + works;
+
+  const speed = (2 - s.macro.regime.approvalSpeed) / (s.approvalSpeedMod || 1)
+    * (1 - clamp(s.relations.bureaucrats, 0, 100) / 260)
+    * (s.staff.some((x) => x.impact === 'approvals') ? 0.72 : 1);
+  const approvalMonths = lt.unapproved ? 0
+    : Math.max(2, Math.round((lt.conversionMonths + lt.approvalMonths) * speed));
+  const months = Math.max(lt.months, Math.round(lt.months * Math.pow(Math.max(0.3, grossSqYd / (SQYD_PER_ACRE * 5)), 0.3)));
+
+  const saleableSqYd = Math.floor(grossSqYd * lt.saleable);
+  const rate = plotPrice(parcel.locality, typeId, s.month, s);
+  const sched = fundingSchedule(budget, Math.max(1, approvalMonths), months);
+  return {
+    budget, approvalMonths, months, conversion, works,
+    saleableSqYd, plotRate: rate,
+    grossValue: Math.round(saleableSqYd * rate),
+    costPerSqYd: budget / Math.max(1, grossSqYd),
+    schedule: sched,
+    firstYearCash: Math.round(sched.firstYear),
+    isLayout: true,
+  };
+}
+
 export function estimateProject(parcel, typeId, sqFt, s) {
+  if (isLayout(typeId)) return estimateLayout(parcel, typeId, sqFt, s);
   const bt = BUILD_TYPES[typeId];
   const ci = costIndex(s.month);
   // The 9% spent during the approval phase is design, approval and launch cost — part
@@ -96,6 +133,7 @@ export function estimateProject(parcel, typeId, sqFt, s) {
 }
 
 export function startProject(s, parcel, typeId, sqFt, mode, name) {
+  if (isLayout(typeId)) return startLayout(s, parcel, typeId, sqFt, name);
   const est = estimateProject(parcel, typeId, sqFt, s);
   const bt = BUILD_TYPES[typeId];
   const landUsed = landConsumedBy(parcel, sqFt, s);
@@ -124,20 +162,57 @@ export function startProject(s, parcel, typeId, sqFt, mode, name) {
   return p;
 }
 
+/** Start a plotted layout. `grossSqYd` is site area, not saleable area. */
+export function startLayout(s, parcel, typeId, grossSqYd, name) {
+  const est = estimateLayout(parcel, typeId, grossSqYd, s);
+  const lt = LAYOUT_TYPES[typeId];
+  const landUsed = Math.min(freeSqYd(parcel), grossSqYd);
+  const landShare = Math.round((parcel.allInCost || 0) * (landUsed / Math.max(1, parcel.areaSqYd)));
+  const p = {
+    id: `P${++projSeq}`,
+    name: name || `${lt.name}, ${BY_ID[parcel.locality].name}`,
+    parcelId: parcel.id, locality: parcel.locality, type: typeId, use: 'plots',
+    isLayout: true, grossSqYd: landUsed, sqFt: est.saleableSqYd, mode: 'sell',
+    budget: est.budget, spent: 0, overrunPct: 0,
+    stage: est.approvalMonths > 0 ? 'approval' : 'construction',
+    approvalLeft: est.approvalMonths, approvalTotal: Math.max(1, est.approvalMonths),
+    months: est.months, elapsed: 0, delay: 0, stalled: 0, riskDelay: 0,
+    quality: lt.unapproved ? 0.35 : 0.7,
+    askPerSqFt: est.plotRate,
+    started: s.month, done: false,
+    landUsed, landShare, phase: (parcel.phases || 0) + 1,
+  };
+  parcel.phases = (parcel.phases || 0) + 1;
+  parcel.usedSqYd = (parcel.usedSqYd || 0) + landUsed;
+  if (freeSqYd(parcel) < 100) parcel.usedBy = p.id;
+  if (parcel.phases > 1) p.name = `${p.name} — phase ${parcel.phases}`;
+  // An unapproved venture puts a defect into the world that follows the buyers.
+  if (lt.unapproved) {
+    s.reputation = clamp(s.reputation - 1.5, 0, 100);
+    p.unapproved = true;
+  }
+  s.projects.push(p);
+  return p;
+}
+
 /** One month of progress for one project. Returns cash spent. */
 export function tickProject(p, s, rng) {
   if (p.done) return 0;
 
   if (p.stage === 'approval') {
-    // Soft costs run during approval regardless of whether the file moves.
-    const soft = Math.round((p.budget * 0.09) / Math.max(1, p.approvalTotal));
+    // Conversion and sanction charges run whether or not the file actually moves.
+    const softShare = p.isLayout ? 0.16 : 0.09;
+    const soft = Math.round((p.budget * softShare) / Math.max(1, p.approvalTotal));
     p.approvalLeft -= 1;
     p.spent += soft;
     if (p.approvalLeft <= 0) {
       p.stage = 'construction';
       s.news.push({
-        m: s.month, tag: 'PROJECT', head: `Sanction received: ${p.name}`,
-        body: `Building permission granted after ${p.approvalTotal} months. Construction can begin.`,
+        m: s.month, tag: 'PROJECT',
+        head: p.isLayout ? `Layout sanctioned: ${p.name}` : `Sanction received: ${p.name}`,
+        body: p.isLayout
+          ? `Conversion out of agricultural use and layout permission both through, after ${p.approvalTotal} months. Roads, drains and services can start, and the plots can now be sold as approved.`
+          : `Building permission granted after ${p.approvalTotal} months. Construction can begin.`,
       });
     }
     return soft;
@@ -149,9 +224,9 @@ export function tickProject(p, s, rng) {
   // not make the remaining work smaller, it just means it does not happen this month.
   const n = p.months + (p.riskDelay || 0);
   const share = sCurve(p.elapsed, n);
-  const hard = p.budget * 0.91;
+  const hard = p.budget * (p.isLayout ? 0.84 : 0.91);
   const cap = hard * (1 + p.overrunPct);
-  const softSpent = p.budget * 0.09;
+  const softSpent = p.budget * (p.isLayout ? 0.16 : 0.09);
   const hardSpent = Math.max(0, p.spent - softSpent);
   const want = Math.round(Math.min(hard * share * (1 + p.overrunPct), Math.max(0, cap - hardSpent)));
   // The work is paid for; nothing is left to spend but the programme is not finished.
@@ -206,6 +281,7 @@ export function tickProject(p, s, rng) {
 }
 
 export function completeProject(p, s) {
+  if (p.isLayout) return completeLayout(p, s);
   p.done = true;
   p.stage = 'complete';
   p.completed = s.month;
@@ -243,9 +319,10 @@ export function completeProject(p, s) {
     const balance = Math.round(presoldOwn * ask * 0.20);
     s.cash += balance;
     s.revenueYTD += balance;
-    // Delivery discharges the advances taken during construction.
+    // Delivery discharges the advances taken during construction. The money itself was
+    // already recognised as revenue when it was collected, month by month; adding it
+    // again here taxed the player twice on the same rupee.
     s.customerAdvances = Math.max(0, (s.customerAdvances || 0) - (p.advances || 0));
-    s.revenueYTD += p.advances || 0;
     s.inventory.push({
       id: `I${p.id}`, projectId: p.id, name: p.name, locality: p.locality,
       type: p.type, use: p.use, sqFt: ownSqFt, remaining: ownSqFt - presoldOwn,
@@ -258,6 +335,45 @@ export function completeProject(p, s) {
       body: `${ownSqFt.toLocaleString('en-IN')} sq ft delivered${p.devAgreement ? `, after handing ${Math.round(p.devAgreement.ownerShare * 100)}% of the built area to the landowner` : ''}. ${presoldOwn ? `${presoldOwn.toLocaleString('en-IN')} sq ft was booked during construction; ` : ''}${(ownSqFt - presoldOwn).toLocaleString('en-IN')} sq ft is unsold. Delivered ${p.delay} month${p.delay === 1 ? '' : 's'} late at ${Math.round(p.overrunPct * 100)}% over budget.`,
     });
   }
+  if (parcel) {
+    parcel.builtCost = (parcel.builtCost || 0) + (p.landShare || 0);
+    if (freeSqYd(parcel) < 100) parcel.consumed = true;
+  }
+}
+
+/** A finished layout becomes plots on the market, priced by the square yard. */
+export function completeLayout(p, s) {
+  p.done = true;
+  p.stage = 'complete';
+  p.completed = s.month;
+  s.stats.projectsDone += 1;
+  s.stats.plotsDeveloped = (s.stats.plotsDeveloped || 0) + p.sqFt;
+  const onTime = p.delay <= p.months * 0.25;
+  s.reputation = clamp(s.reputation + (p.unapproved ? 1 : 3) + (onTime ? 1 : -1), 0, 100);
+
+  const parcel = s.parcels.find((x) => x.id === p.parcelId);
+  const rate = plotPrice(p.locality, p.type, s.month, s);
+  const presold = Math.min(p.sqFt, Math.round(p.presold || 0));
+  const balance = Math.round(presold * rate * 0.20);
+  s.cash += balance;
+  s.revenueYTD += balance;
+  // Already recognised month by month as it was collected; not revenue a second time.
+  s.customerAdvances = Math.max(0, (s.customerAdvances || 0) - (p.advances || 0));
+
+  s.inventory.push({
+    id: `I${p.id}`, projectId: p.id, name: p.name, locality: p.locality,
+    type: p.type, use: 'plots', isLayout: true, unit: 'sq yd',
+    sqFt: p.sqFt, remaining: p.sqFt - presold,
+    askPerSqFt: rate, quality: p.quality, completed: s.month,
+    unapproved: !!p.unapproved,
+    cost: Math.round(p.spent) + (p.landShare || 0),
+  });
+  s.news.push({
+    m: s.month, tag: 'PROJECT', head: `${p.name} ready for sale`,
+    body: `${p.sqFt.toLocaleString('en-IN')} saleable square yards out of a ${Math.round(p.grossSqYd).toLocaleString('en-IN')} square yard site — the rest went to roads, drains and surrendered open space. `
+      + `Plots are quoted at ₹${Math.round(rate).toLocaleString('en-IN')} a square yard against a raw land rate of ₹${Math.round(landRate(p.locality, s.month, s)).toLocaleString('en-IN')}. `
+      + (p.unapproved ? 'Unapproved, so the buyers are carrying a regularisation risk you have priced in and passed on.' : 'Sanctioned, serviced and registrable, which is most of what the buyer is paying for.'),
+  });
   if (parcel) {
     parcel.builtCost = (parcel.builtCost || 0) + (p.landShare || 0);
     if (freeSqYd(parcel) < 100) parcel.consumed = true;
@@ -332,11 +448,14 @@ export function tickPresales(p, s, rng) {
   // Under-construction stock sells at a discount to finished stock, and that discount
   // is exactly what makes it move. `disc` below 1 means cheaper than market.
   const disc = preLaunch ? 0.80 : 0.86 + progress * 0.12;
-  const rate = absorptionRate(p.locality, p.type, disc, s) * reraDrag * (preLaunch ? 0.45 : 1);
+  const rate = (p.isLayout
+    ? plotAbsorption(p.locality, p.type, disc, s)
+    : absorptionRate(p.locality, p.type, disc, s)) * reraDrag * (preLaunch ? 0.45 : 1);
   const sqFtSold = Math.min((p.sqFt - (p.presold || 0)) * rate, p.sqFt * (preLaunch ? 0.04 : 0.08));
   if (sqFtSold < 1) return 0;
   p.presold = Math.min(p.sqFt, (p.presold || 0) + sqFtSold);
-  const price = salePrice(p.locality, p.type, s.month, s) * disc;
+  const price = (p.isLayout ? plotPrice(p.locality, p.type, s.month, s)
+    : salePrice(p.locality, p.type, s.month, s)) * disc;
   // Construction-linked payment plans: roughly four-fifths of the price is collected
   // as the slabs go up, the balance at handover. This is how Indian residential
   // development was actually financed — the buyers were the lender.
@@ -354,9 +473,13 @@ export function tickInventory(s, rng) {
   let revenue = 0, cogs = 0;
   for (const inv of s.inventory) {
     if (inv.remaining <= 0) continue;
-    const market = salePrice(inv.locality, inv.type, s.month, s);
+    const market = inv.isLayout
+      ? plotPrice(inv.locality, inv.type, s.month, s)
+      : salePrice(inv.locality, inv.type, s.month, s);
     const askVs = inv.askPerSqFt / market;
-    const rate = absorptionRate(inv.locality, inv.type, askVs, s);
+    const rate = inv.isLayout
+      ? plotAbsorption(inv.locality, inv.type, askVs, s)
+      : absorptionRate(inv.locality, inv.type, askVs, s);
     const sold = Math.min(inv.remaining, inv.sqFt * rate * rng.range(0.6, 1.4));
     if (sold < 1) continue;
     inv.remaining -= sold;

@@ -6,17 +6,19 @@ import { makeRng } from '../core/rng.js';
 import { clamp, dateLabel, yearOf, money, END_MONTH, SQYD_PER_ACRE } from '../core/util.js';
 import { TIMELINE, regimeAt } from '../data/history.js';
 import { BY_ID, DEFECTS } from '../data/geo.js';
-import { BUILD_TYPES, ROLES, LENDERS } from '../data/costs.js';
+import { BUILD_TYPES, LAYOUT_TYPES, ROLES, LENDERS } from '../data/costs.js';
 import { EVENTS } from '../data/events.js';
 import { COMPETITORS, FIRST_NAMES, SURNAMES, newGame } from './state.js';
 import {
   macroAt, landRate, rentRate, salePrice, capRate, costIndex, dutyRate, salaryIndex,
   makeLandOffer, makeDevAgreement, makeAssetOffer, runDueDiligence, marketView, farFor,
+  plotPrice, plotAbsorption,
 } from './market.js';
 import { creditDecision, takeLoan, serviceDebt, totalDebt, availableLenders, offeredRate, distressedLoans,
   quotePrepayment, prepaymentPenaltyRate, remainingTenure, interestIfHeld } from './finance.js';
 import { startProject, tickProject, tickPresales, tickInventory, estimateProject, maxBuildableSqFt,
-  remainingCommitments, abandonProject, fundingSchedule, freeSqYd, landConsumedBy } from './build.js';
+  remainingCommitments, abandonProject, fundingSchedule, freeSqYd, landConsumedBy,
+  estimateLayout, isLayout } from './build.js';
 import { tickAsset, assetValue, portfolioNoiAnnual, propertyTax } from './assets.js';
 import { balanceSheet, computeRatios, closeYear, landValue } from './accounting.js';
 
@@ -248,10 +250,20 @@ export function launchProject(s, parcelId, typeId, sqFt, mode, name) {
   if (!parcel || parcel.consumed || freeSqYd(parcel) < 100) return { ok: false, msg: 'There is no land left on that parcel.' };
   const fatal = parcel.known.filter((d) => DEFECTS[d].fatal && !(parcel.resolved || []).includes(d));
   if (fatal.length) return { ok: false, msg: `You cannot build on this: ${DEFECTS[fatal[0]].name}.` };
-  const cap = maxBuildableSqFt(parcel, s);
-  if (sqFt > cap) return { ok: false, msg: `Permissible floor area allows only ${cap.toLocaleString('en-IN')} sq ft here today.` };
-  const bt = BUILD_TYPES[typeId];
-  if (sqFt < bt.minSqFt) return { ok: false, msg: `${bt.name} is not viable below ${bt.minSqFt.toLocaleString('en-IN')} sq ft.` };
+  const lt = LAYOUT_TYPES[typeId];
+  if (lt) {
+    // Layouts are measured in square yards of site, not square feet of building.
+    const free = freeSqYd(parcel);
+    if (sqFt > free) return { ok: false, msg: `Only ${free.toLocaleString('en-IN')} sq yd of this parcel is undeveloped.` };
+    if (sqFt < lt.minAcres * SQYD_PER_ACRE) {
+      return { ok: false, msg: `A ${lt.name.toLowerCase()} needs at least ${lt.minAcres} acre${lt.minAcres === 1 ? '' : 's'} (${Math.round(lt.minAcres * SQYD_PER_ACRE).toLocaleString('en-IN')} sq yd) to be worth laying out.` };
+    }
+  } else {
+    const cap = maxBuildableSqFt(parcel, s);
+    if (sqFt > cap) return { ok: false, msg: `Permissible floor area allows only ${cap.toLocaleString('en-IN')} sq ft here today.` };
+    const bt = BUILD_TYPES[typeId];
+    if (sqFt < bt.minSqFt) return { ok: false, msg: `${bt.name} is not viable below ${bt.minSqFt.toLocaleString('en-IN')} sq ft.` };
+  }
   const est = estimateProject(parcel, typeId, sqFt, s);
   // You must be able to fund a serious share of the next twelve months of building,
   // across everything you already have running. Buyer advances cover the rest, if the
@@ -1142,6 +1154,7 @@ function checkEnd(s) {
 
 export {
   abandonProject, remainingCommitments, fundingSchedule, freeSqYd, landConsumedBy,
+  estimateLayout, isLayout, plotPrice, plotAbsorption,
   quotePrepayment, prepaymentPenaltyRate, remainingTenure, interestIfHeld,
   marketView, landRate, rentRate, salePrice, capRate, costIndex, dutyRate, salaryIndex,
   farFor, estimateProject, maxBuildableSqFt, assetValue, portfolioNoiAnnual,

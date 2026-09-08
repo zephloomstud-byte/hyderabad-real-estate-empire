@@ -4,7 +4,7 @@
 
 import { money, usd, pct, num, dateLabel, yearOf, round, clamp, SQYD_PER_ACRE, END_MONTH } from '../core/util.js';
 import { saveGame, loadGame, clearSave, REL_KEYS, COMPETITORS } from '../sim/state.js';
-import { ROLES, BUILD_TYPES, LENDERS, MATERIALS, WAGES } from '../data/costs.js';
+import { ROLES, BUILD_TYPES, LAYOUT_TYPES, LENDERS, MATERIALS, WAGES } from '../data/costs.js';
 import { BY_ID, DEFECTS } from '../data/geo.js';
 import {
   refresh, advanceMonth, resolveEvent, buyLand, signDevAgreement, buyAssetOffer,
@@ -14,6 +14,7 @@ import {
   portfolioNoiAnnual, availableLenders, offeredRate, creditDecision, landValue,
   abandonProject, remainingCommitments, freeSqYd,
   repayLoan, quotePrepayment, remainingTenure, interestIfHeld, brokerDeal, startGame,
+  estimateLayout, isLayout, plotPrice,
 } from '../sim/engine.js';
 import { materialPrice, wage } from '../sim/market.js';
 
@@ -359,9 +360,10 @@ views.portfolio = () => `<div class="stack">
   ${S.inventory.length ? `<div class="card"><h3>Completed unsold stock</h3><table>
     <tr><th>Project</th><th class="n">Unsold</th><th class="n">Your ask</th><th class="n">Market</th><th class="n">Value</th><th>Reprice</th></tr>
     ${S.inventory.map((i) => {
-      const mkt = salePrice(i.locality, i.type, S.month, S);
-      return `<tr><td><b>${esc(i.name)}</b><div class="small muted">Completed ${dateLabel(i.completed)} · ${Math.round((S.month - i.completed))} months old</div></td>
-      <td class="n">${num(i.remaining)} / ${num(i.sqFt)} sq ft</td>
+      const unit = i.isLayout ? 'sq yd' : 'sq ft';
+      const mkt = i.isLayout ? plotPrice(i.locality, i.type, S.month, S) : salePrice(i.locality, i.type, S.month, S);
+      return `<tr><td><b>${esc(i.name)}</b><div class="small muted">Completed ${dateLabel(i.completed)} · ${Math.round((S.month - i.completed))} months old${i.unapproved ? ' · <span class="pill warn">Unapproved</span>' : ''}</div></td>
+      <td class="n">${num(i.remaining)} / ${num(i.sqFt)} ${unit}</td>
       <td class="n">₹${Math.round(i.askPerSqFt)}</td>
       <td class="n">₹${Math.round(mkt)}</td>
       <td class="n">${money(i.remaining * i.askPerSqFt)}</td>
@@ -811,12 +813,27 @@ function showBuild(parcelId) {
   if (!p) return;
   const loc = BY_ID[p.locality];
   const cap = maxBuildableSqFt(p, S);
+  const site = freeSqYd(p);
   const types = Object.values(BUILD_TYPES).filter((b) => b.minSqFt <= cap);
+  const layouts = Object.values(LAYOUT_TYPES).filter((l) => l.minAcres * SQYD_PER_ACRE <= site);
+  const allOptions = [...types.map((t) => ({ ...t, kind: 'build' })), ...layouts.map((l) => ({ ...l, kind: 'layout' }))];
+  if (!allOptions.length) return say('There is nothing worth doing on this parcel at present.');
 
   const committed = remainingCommitments(S);
   // Default to the largest phase the player can actually fund, not the largest the plot
   // allows. The gap between those two numbers is what bankrupts developers.
   const fundableSize = (typeId) => {
+    if (isLayout(typeId)) {
+      const lt = LAYOUT_TYPES[typeId];
+      const floor = lt.minAcres * SQYD_PER_ACRE;
+      for (const want of [site, site * 0.75, site * 0.5, site * 0.35, site * 0.25, floor]) {
+        const sq = Math.floor(Math.min(site, want));
+        if (sq < floor) continue;
+        const e = estimateLayout(p, typeId, sq, S);
+        if ((committed + e.schedule.peak) * 0.32 <= S.cash) return sq;
+      }
+      return Math.floor(Math.min(site, floor));
+    }
     const bt = BUILD_TYPES[typeId];
     for (const want of [cap, 200000, 120000, 60000, 30000, 18000, 12000, 8000, 5000, 3000]) {
       const sq = Math.min(cap, want);
@@ -826,11 +843,12 @@ function showBuild(parcelId) {
     }
     return Math.max(bt.minSqFt, Math.min(cap, 3000));
   };
-  const initialSize = fundableSize(types[0].id);
+  const initialSize = fundableSize(allOptions[0].id);
 
   const draw = () => {
-    const typeId = $('#bt') ? $('#bt').value : types[0].id;
+    const typeId = $('#bt') ? $('#bt').value : allOptions[0].id;
     const sqFt = $('#bsf') ? Number($('#bsf').value) : initialSize;
+    if (isLayout(typeId)) return drawLayout(typeId, sqFt);
     const est = estimateProject(p, typeId, sqFt, S);
     const bt = BUILD_TYPES[typeId];
     const rent = rentRate(p.locality, bt.use, S.month, S.flags);
@@ -864,13 +882,48 @@ function showBuild(parcelId) {
       but it takes years to let, and every empty month costs you.</div>`;
   };
 
+  const drawLayout = (typeId, grossSqYd) => {
+    const lt = LAYOUT_TYPES[typeId];
+    const est = estimateLayout(p, typeId, grossSqYd, S);
+    const need = (committed + est.schedule.peak) * 0.32;
+    const fundable = S.cash >= need;
+    const landCost = Math.round((p.allInCost || 0) * (grossSqYd / Math.max(1, p.areaSqYd)));
+    const total = est.budget + landCost;
+    $('#estimate').innerHTML = `
+      ${row('Site area for this venture', num(grossSqYd) + ' sq yd (' + (grossSqYd / SQYD_PER_ACRE).toFixed(2) + ' acres)')}
+      ${row('Saleable after roads and open space', num(est.saleableSqYd) + ' sq yd — ' + pct(lt.saleable, 0) + ' of the site')}
+      ${row('Conversion out of agricultural use', est.conversion ? money(est.conversion) : 'Not applicable')}
+      ${row('Roads, drains, water, power', money(est.works))}
+      ${row('Land attributable to this venture', money(landCost))}
+      ${row('Total cost', money(total), 'total')}
+      <div style="height:8px"></div>
+      ${row('Sanction and conversion take', est.approvalMonths ? est.approvalMonths + ' months' : 'No sanction sought')}
+      ${row('Development works take', est.months + ' months')}
+      ${row('Peak funding required', money(est.schedule.peak))}
+      ${row('Cash you should have in hand', money(need) + ' vs your ' + money(S.cash), fundable ? '' : 'total')}
+      ${fundable ? '' : '<div class="small neg" style="padding:6px 0">Not fundable at this size. Lay out fewer acres now and do the rest as a second phase.</div>'}
+      <div style="height:8px"></div>
+      ${row('Raw land rate today', '₹' + num(Math.round(landRate(p.locality, S.month, S))) + ' / sq yd')}
+      ${row('Developed plot rate', '₹' + num(Math.round(est.plotRate)) + ' / sq yd — ' + (est.plotRate / Math.max(1, landRate(p.locality, S.month, S))).toFixed(1) + '× raw land')}
+      ${row('Revenue if it all sells', money(est.grossValue), 'total')}
+      ${row('Profit over land and works', money(est.grossValue - total))}
+      <div class="small muted" style="margin-top:8px">${esc(lt.desc)}</div>
+      ${lt.unapproved ? '<div class="small neg" style="padding:6px 0">An unapproved venture sells faster and cheaper, costs you standing in the market, and hands every buyer a regularisation problem. Plenty of people did exactly this.</div>' : ''}`;
+    $('#go-sell').disabled = !fundable;
+    $('#go-hold').disabled = true;
+    $('#go-hold').title = 'A layout is sold as plots; there is nothing to retain and let.';
+  };
+
   openModal(`<div class="modal">
     <div class="head"><div class="cat">Develop · ${esc(loc.name)}</div><h2>${esc(p.label)}</h2></div>
     <div class="body">
       <div class="grid g2">
-        <label class="stack" style="gap:4px"><span class="small muted">What to build</span>
-          <select id="bt">${types.map((b) => `<option value="${b.id}">${esc(b.name)} — ₹${Math.round(b.cost * costIndex(S.month))}/sq ft</option>`).join('')}</select></label>
-        <label class="stack" style="gap:4px"><span class="small muted">Built-up area for this phase (sq ft), max ${num(cap)}</span>
+        <label class="stack" style="gap:4px"><span class="small muted">What to do with it</span>
+          <select id="bt">
+            ${types.length ? `<optgroup label="Build">${types.map((b) => `<option value="${b.id}">${esc(b.name)} — ₹${Math.round(b.cost * costIndex(S.month))}/sq ft built</option>`).join('')}</optgroup>` : ''}
+            ${layouts.length ? `<optgroup label="Lay out and sell plots">${layouts.map((l) => `<option value="${l.id}">${esc(l.name)} — ₹${Math.round(l.cost * costIndex(S.month))}/sq yd of site</option>`).join('')}</optgroup>` : ''}
+          </select></label>
+        <label class="stack" style="gap:4px"><span class="small muted" id="bsflabel">Built-up area for this phase (sq ft), max ${num(cap)}</span>
           <input id="bsf" type="number" value="${initialSize}" max="${cap}" step="500"></label>
       </div>
       <div class="card tight" style="margin-top:12px" id="estimate"></div>
@@ -883,8 +936,17 @@ function showBuild(parcelId) {
     </div></div>
   </div>`, (rootEl) => {
     const upd = () => {
+      const t = $('#bt', rootEl).value;
+      const lay = isLayout(t);
+      $('#bsf', rootEl).max = lay ? site : cap;
+      $('#bsf', rootEl).step = lay ? 100 : 500;
+      $('#bsflabel', rootEl).textContent = lay
+        ? `Site area to lay out (sq yd), up to ${num(site)} — ${(site / SQYD_PER_ACRE).toFixed(2)} acres available`
+        : `Built-up area for this phase (sq ft), max ${num(cap)}`;
+      $('#go-sell', rootEl).textContent = lay ? 'Develop the layout and sell plots' : 'Build to sell';
+      $('#go-hold', rootEl).style.display = lay ? 'none' : '';
       draw();
-      $('#btdesc', rootEl).textContent = BUILD_TYPES[$('#bt', rootEl).value].desc;
+      $('#btdesc', rootEl).textContent = (BUILD_TYPES[t] || LAYOUT_TYPES[t]).desc;
     };
     $('#bt', rootEl).onchange = () => { $('#bsf', rootEl).value = fundableSize($('#bt', rootEl).value); upd(); };
     $('#bsf', rootEl).oninput = upd;
