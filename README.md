@@ -5,7 +5,9 @@ with ₹25 lakh, most of it your father's, and three years of brokering plots in
 The target is a net worth of one hundred billion dollars. You will almost certainly not
 get there, and the point of the game is finding out how far you do get.
 
-**[Play it in your browser](#)** — or clone it and run:
+### ▶ [Play it in your browser](https://zephloomstud-byte.github.io/hyderabad-real-estate-empire/)
+
+No signup, no install, nothing sent anywhere. Or clone it and run it yourself:
 
 ```bash
 node tools/serve.mjs
@@ -83,7 +85,7 @@ nowhere else. Export it from Books → Danger zone if you want a copy.
 
 ## Licence
 
-MIT. Built by [Zephloom](https://github.com/) with [Claude Code](https://claude.com/claude-code).
+MIT. Built by [Zephloom](https://github.com/zephloomstud-byte) with [Claude Code](https://claude.com/claude-code).
 
 Balance is not hand-waved: `tools/careful.mjs` plays full 25-year runs with a conservative
 strategy and reports survival rates, `tools/econ.mjs` checks per-project unit economics
