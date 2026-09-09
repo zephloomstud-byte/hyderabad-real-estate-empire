@@ -79,9 +79,14 @@ villas in 2015.
 
 ## Privacy
 
-There is no telemetry, no analytics and no network calls of any kind beyond the Google
-Fonts stylesheet. Your saved game lives in your own browser's `localStorage` and goes
-nowhere else. Export it from Books → Danger zone if you want a copy.
+There is no telemetry, no analytics, and **no third-party requests of any kind**. The
+typefaces are self-hosted rather than linked from Google, so opening the game does not
+hand your IP address and User-Agent to anyone — which is the most common privacy leak on
+the web and has been held unlawful under the GDPR (LG München I, 3 O 17493/20).
+
+Once the page has loaded it makes no network requests at all. Your saved game lives in
+your own browser's `localStorage` and goes nowhere else. Export it from Books → Danger
+zone if you want a copy.
 
 ## Licence
 

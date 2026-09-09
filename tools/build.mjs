@@ -30,15 +30,21 @@ const js = readFileSync(TMP, 'utf8');
 const css = readFileSync(join(ROOT, 'styles.css'), 'utf8');
 rmSync(TMP, { force: true });
 
+// Inline the typefaces as data URIs. The single-file build has to be genuinely single:
+// a relative url() to fonts/ would break the moment somebody moves the file, and a link
+// to Google would reintroduce the third-party request this project deliberately removed.
+const fontCss = readFileSync(join(ROOT, 'fonts.css'), 'utf8')
+  .replace(/url\('fonts\/([^']+)'\)/g, (_, file) => {
+    const b64 = readFileSync(join(ROOT, 'fonts', file)).toString('base64');
+    return `url(data:font/woff2;base64,${b64})`;
+  });
+
 // The gallery and browser tab want a name, not a caption with a date range after it.
 const TITLE = 'Hyderabad Real Estate Empire';
-const FONTS = 'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap';
 
 const head = `<title>${TITLE}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="${FONTS}" rel="stylesheet">
 <style>
+${fontCss}
 ${css}
 </style>`;
 
