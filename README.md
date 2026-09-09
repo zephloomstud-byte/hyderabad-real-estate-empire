@@ -5,12 +5,17 @@ with ₹25 lakh, most of it your father's, and three years of brokering plots in
 The target is a net worth of one hundred billion dollars. You will almost certainly not
 get there, and the point of the game is finding out how far you do get.
 
+**[Play it in your browser](#)** — or clone it and run:
+
 ```bash
 node tools/serve.mjs
 ```
 
-Then open <http://localhost:5173>. No build step, no dependencies. Saves to `localStorage`
-after every month.
+Then open <http://localhost:5173>. No build step, no dependencies, nothing to install.
+The game saves to `localStorage` after every month and never sends anything anywhere.
+
+`node tools/build.mjs` produces `dist/real-estate-empire.html` — the whole game as one
+324 KB file you can double-click or host anywhere.
 
 ## What is actually simulated
 
@@ -69,3 +74,17 @@ is the intended result.
 Unit economics are checked against the historical record: ₹613/sq ft sale against ₹486/sq ft
 cost in Kukatpally in 1995, ₹1,618 in 2005, ₹3,380 in Gachibowli in 2006, ₹6,005 for Kokapet
 villas in 2015.
+
+## Privacy
+
+There is no telemetry, no analytics and no network calls of any kind beyond the Google
+Fonts stylesheet. Your saved game lives in your own browser's `localStorage` and goes
+nowhere else. Export it from Books → Danger zone if you want a copy.
+
+## Licence
+
+MIT. Built by [Zephloom](https://github.com/) with [Claude Code](https://claude.com/claude-code).
+
+Balance is not hand-waved: `tools/careful.mjs` plays full 25-year runs with a conservative
+strategy and reports survival rates, `tools/econ.mjs` checks per-project unit economics
+against historical prices, and `tools/simtest.mjs` sweeps for crashes and broken invariants.
