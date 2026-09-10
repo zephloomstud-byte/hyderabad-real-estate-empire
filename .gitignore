@@ -1,3 +1,4 @@
 node_modules/
 *.log
 dist/.app.bundle.js
+dist/bigsave.json

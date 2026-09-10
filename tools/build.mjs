@@ -9,15 +9,18 @@
 // Run: node tools/build.mjs   (requires npx esbuild, fetched on demand)
 
 import { execSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = join(ROOT, 'dist');
+const BUILD = join(ROOT, 'build');
 const TMP = join(DIST, '.app.bundle.js');
 
 mkdirSync(DIST, { recursive: true });
+mkdirSync(BUILD, { recursive: true });
 
 console.log('bundling…');
 // Node 24 refuses to spawn .cmd shims directly, so go through the shell.
@@ -70,6 +73,26 @@ ${body}
 </html>
 `);
 
-const kb = (p) => (readFileSync(join(DIST, p)).length / 1024).toFixed(0) + ' KB';
+// ---------------------------------------------------------------- hosted build
+//
+// GitHub Pages serves assets with a ten-minute cache and no revalidation, and the browser
+// keeps ES modules considerably longer than that. The practical effect is that a player
+// sitting on a broken build can keep hitting the bug after it has been fixed, with no way
+// to know. So the hosted page loads one bundle whose filename contains a hash of its own
+// contents: change a byte and the filename changes, and a stale copy becomes unreachable
+// rather than merely unlucky. It also turns twelve round trips into one.
+const hash = createHash('sha256').update(js).digest('hex').slice(0, 10);
+const bundleName = `app.${hash}.js`;
+
+// Drop any bundle from a previous build so the directory does not accumulate.
+for (const f of readdirSync(BUILD)) if (/^app\.[0-9a-f]{10}\.js$/.test(f)) rmSync(join(BUILD, f));
+writeFileSync(join(BUILD, bundleName), js);
+
+const index = readFileSync(join(ROOT, 'index.html'), 'utf8')
+  .replace(/<script[^>]*src="[^"]*"[^>]*><\/script>/, `<script src="build/${bundleName}"></script>`);
+writeFileSync(join(ROOT, 'index.html'), index);
+
+const kb = (p, dir = DIST) => (readFileSync(join(dir, p)).length / 1024).toFixed(0) + ' KB';
 console.log(`dist/real-estate-empire.html  ${kb('real-estate-empire.html')}`);
 console.log(`dist/artifact.html            ${kb('artifact.html')}`);
+console.log(`build/${bundleName}${' '.repeat(Math.max(0, 24 - bundleName.length))}${kb(bundleName, BUILD)}  (index.html now points here)`);
