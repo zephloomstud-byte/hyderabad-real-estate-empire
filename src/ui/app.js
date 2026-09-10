@@ -135,7 +135,7 @@ function render() {
       ${tabBtn('news', 'News')}
       ${tabBtn('books', 'Books')}
     </nav>
-    <main id="view">${views[tab]()}</main>
+    <main id="view">${renderTab()}</main>
     ${toast ? `<div style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:3px;z-index:90;max-width:560px;box-shadow:var(--shadow)">${esc(toast)}</div>` : ''}
   `;
 
@@ -151,6 +151,24 @@ function render() {
 
   if (S.pendingEvent && !modal) showEvent();
   if (S.over && !modal) showEnding();
+}
+
+/**
+ * Render the active tab, but never let one broken row take the application down with it.
+ * A thrown error used to leave the tab completely blank with no clue why.
+ */
+function renderTab() {
+  try {
+    return views[tab]();
+  } catch (err) {
+    console.error('view failed:', tab, err);
+    return `<div class="card"><h3>This view could not be drawn</h3>
+      <p class="small">Something in the ${esc(tab)} tab threw an error, so it has been skipped rather than
+      taking the rest of the game down. Your save is intact and every other tab still works.</p>
+      <pre class="small mono" style="white-space:pre-wrap;overflow-x:auto">${esc(String(err && err.stack || err))}</pre>
+      <p class="small muted">Please report this with the text above at
+      <a href="https://github.com/zephloomstud-byte/hyderabad-real-estate-empire/issues" target="_blank" rel="noopener">the issue tracker</a>.</p></div>`;
+  }
 }
 
 const stat = (k, v, cls = '') => `<div class="stat"><div class="k">${k}</div><div class="v ${cls}">${v}</div></div>`;
@@ -322,6 +340,31 @@ views.land = () => {
   </table></div>`;
 };
 
+/**
+ * Describe a project without assuming it is a building. Layout projects carry a type
+ * from LAYOUT_TYPES, not BUILD_TYPES, and looking one up in the other returns undefined
+ * — which threw and took the entire Projects tab down with it.
+ */
+function projectKind(p) {
+  const t = BUILD_TYPES[p.type] || LAYOUT_TYPES[p.type];
+  const layout = !!p.isLayout;
+  return {
+    name: t ? t.name : (p.type || 'Project'),
+    layout,
+    unit: layout ? 'sq yd' : 'sq ft',
+    areaLabel: layout
+      ? `${num(p.sqFt)} sq yd saleable`
+      : `${num(p.sqFt)} sq ft`,
+    subLabel: layout
+      ? `from ${num(Math.round(p.grossSqYd || 0))} sq yd of site`
+      : null,
+    stageWord: layout ? 'developed' : 'built',
+    buildingWord: layout ? 'Roads and services' : 'Building',
+    approvalWord: layout ? 'Conversion & layout sanction' : 'Awaiting sanction',
+    disposal: layout ? 'plots for sale' : (p.mode === 'hold' ? 'to be retained' : 'for sale'),
+  };
+}
+
 views.projects = () => {
   const live = S.projects.filter((p) => !p.done);
   const done = S.projects.filter((p) => p.done).slice(-8).reverse();
@@ -329,29 +372,34 @@ views.projects = () => {
     ${live.length ? `<div class="card"><h3>Under way</h3><table>
       <tr><th>Project</th><th>Stage</th><th class="n">Area</th><th class="n">Budget</th><th class="n">Spent</th><th class="n">Still to spend</th><th class="n">Overrun</th><th class="n">Late by</th><th>Progress</th></tr>
       ${live.map((p) => {
-        const n = p.months + p.delay;
-        const prog = p.stage === 'approval' ? 0 : p.elapsed / n;
+        const k = projectKind(p);
+        const n = Math.max(1, p.months + (p.riskDelay || 0));
+        const prog = p.stage === 'approval' ? 0 : clamp(p.elapsed / n, 0, 1);
         return `<tr>
-          <td><b>${esc(p.name)}</b><div class="small muted">${BUILD_TYPES[p.type].name} · ${p.mode === 'hold' ? 'to be retained' : 'for sale'}${p.devAgreement ? ` · owner takes ${pct(p.devAgreement.ownerShare, 0)}` : ''}</div></td>
-          <td>${p.stage === 'approval' ? `<span class="pill">Awaiting sanction (${p.approvalLeft} mo)</span>` : p.stalled ? '<span class="pill warn">Stopped — no money</span>' : '<span class="pill good">Building</span>'}</td>
-          <td class="n">${num(p.sqFt)} sq ft</td>
+          <td><b>${esc(p.name)}</b><div class="small muted">${esc(k.name)} · ${k.disposal}${p.unapproved ? ' · <span class="pill warn">Unapproved</span>' : ''}${p.devAgreement ? ` · owner takes ${pct(p.devAgreement.ownerShare, 0)}` : ''}</div></td>
+          <td>${p.stage === 'approval' ? `<span class="pill">${k.approvalWord} (${p.approvalLeft} mo)</span>` : p.stalled ? '<span class="pill warn">Stopped — no money</span>' : `<span class="pill good">${k.buildingWord}</span>`}</td>
+          <td class="n">${k.areaLabel}${k.subLabel ? `<div class="small muted">${k.subLabel}</div>` : ''}</td>
           <td class="n">${money(p.budget * (1 + p.overrunPct))}</td>
           <td class="n">${money(p.spent)}</td>
           <td class="n">${money(Math.max(0, p.budget * (1 + p.overrunPct) - p.spent))}</td>
           <td class="n ${p.overrunPct > 0.03 ? 'neg' : ''}">${pct(p.overrunPct)}</td>
           <td class="n ${p.delay > 3 ? 'neg' : ''}">${Math.round(p.delay)} mo</td>
           <td style="min-width:135px"><div class="bar"><i style="width:${Math.round(prog * 100)}%"></i></div>
-            <div class="small muted">${Math.round(prog * 100)}% built · quality ${Math.round(p.quality * 100)}${p.presold ? ` · ${Math.round((p.presold / p.sqFt) * 100)}% booked` : ''}</div>
+            <div class="small muted">${Math.round(prog * 100)}% ${k.stageWord} · quality ${Math.round(p.quality * 100)}${p.presold ? ` · ${Math.round(clamp(p.presold / Math.max(1, p.sqFt), 0, 1) * 100)}% booked` : ''}</div>
             <button class="btn sm ghost" style="margin-top:6px" data-abandon="${p.id}">Abandon</button></td>
         </tr>`;
       }).join('')}
-    </table></div>` : emptyCard('No projects under way. Buy land, then build on it — or hold the land and let the city come to you.')}
+    </table></div>` : emptyCard('No projects under way. Buy land and build on it, lay it out and sell plots — or hold it and let the city come to you.')}
 
     ${done.length ? `<div class="card"><h3>Delivered</h3><table>
       <tr><th>Project</th><th class="n">Area</th><th class="n">Final cost</th><th class="n">Late</th><th class="n">Quality</th><th>Outcome</th></tr>
-      ${done.map((p) => `<tr><td>${esc(p.name)}</td><td class="n">${num(p.sqFt)}</td><td class="n">${money(p.spent)}</td>
+      ${done.map((p) => {
+        const k = projectKind(p);
+        return `<tr><td>${esc(p.name)}<div class="small muted">${esc(k.name)}</div></td>
+        <td class="n">${num(p.sqFt)} ${k.unit}</td><td class="n">${money(p.spent)}</td>
         <td class="n">${Math.round(p.delay)} mo</td><td class="n">${Math.round(p.quality * 100)}</td>
-        <td>${p.mode === 'hold' ? 'Retained' : 'Sold down'}</td></tr>`).join('')}
+        <td>${k.layout ? 'Plots sold' : p.mode === 'hold' ? 'Retained' : 'Sold down'}</td></tr>`;
+      }).join('')}
     </table></div>` : ''}
   </div>`;
 };
