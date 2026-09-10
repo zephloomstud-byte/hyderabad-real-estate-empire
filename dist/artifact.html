@@ -1245,24 +1245,31 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     bump("JV", s.jvs);
     return s;
   }
-  function findDuplicateIds(s) {
-    const dupes = [];
-    for (const [name, list] of [
-      ["parcels", s.parcels],
-      ["projects", s.projects],
-      ["assets", s.assets],
-      ["loans", s.loans],
-      ["staff", s.staff],
-      ["offers", s.offers]
-    ]) {
+  function repairDuplicateIds(s) {
+    const repaired = [];
+    const collections = [
+      ["PL", s.parcels],
+      ["P", s.projects],
+      ["A", s.assets],
+      ["L", s.loans],
+      ["S", s.staff],
+      ["O", s.offers],
+      ["JV", s.jvs]
+    ];
+    for (const [prefix, list] of collections) {
+      if (!Array.isArray(list)) continue;
       const seen = /* @__PURE__ */ new Set();
-      for (const item of list || []) {
-        if (!item || !item.id) continue;
-        if (seen.has(item.id)) dupes.push(`${name}:${item.id}`);
+      for (const item of list) {
+        if (!item) continue;
+        if (!item.id || seen.has(item.id)) {
+          const old = item.id;
+          item.id = nextId(s, prefix);
+          repaired.push(`${old || "(missing)"} -> ${item.id}`);
+        }
         seen.add(item.id);
       }
     }
-    return dupes;
+    return repaired;
   }
 
   // src/data/costs.js
@@ -4673,15 +4680,16 @@ A proper refurbishment is about ${money(cost)}.`,
   }
   function refresh(s) {
     if (!s.intel) s.intel = initialIntel();
-    if (!s.seq) {
+    if (!s.idsRepaired) {
       reseedIds(s);
-      const dupes = findDuplicateIds(s);
-      if (dupes.length) {
+      const repaired = repairDuplicateIds(s);
+      s.idsRepaired = true;
+      if (repaired.length) {
         s.news.push({
           m: s.month,
           tag: "NOTE",
           head: "Records reconciled",
-          body: `A fault in an earlier version reused ${dupes.length} internal reference${dupes.length === 1 ? "" : "s"} after a page reload, which could make a button act on the wrong parcel or project. The numbering has been repaired and cannot recur. Anything already affected stays as it is; nothing has been lost.`
+          body: `A fault in an earlier version reused ${repaired.length} internal reference${repaired.length === 1 ? "" : "s"} after a page reload, which made some buttons act on the wrong parcel or project \u2014 most visibly, land you clearly owned reporting that it had nothing left to build on. The numbering has been renumbered and cannot collide again. Nothing has been lost and no holding has changed hands.`
         });
       }
     }

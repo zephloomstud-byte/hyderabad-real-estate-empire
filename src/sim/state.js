@@ -233,6 +233,40 @@ export function reseedIds(s) {
 }
 
 /**
+ * Renumber anything that shares an id with something earlier in the same collection.
+ *
+ * Lifting the sequence above the highest id in use stops NEW collisions, but a save
+ * written before that fix already contains them — two parcels both called PL3, so
+ * clicking Build on the second finds the first, which may be fully built out. The
+ * visible symptom is a land bank full of acreage where the game insists there is
+ * nothing left.
+ *
+ * The first holder of an id keeps it, so existing cross-references (a project pointing
+ * at its parcel, a facility pointing at its building) continue to resolve exactly as
+ * they did. Every later duplicate gets a fresh id and becomes independently addressable,
+ * which is what makes its buttons work again.
+ */
+export function repairDuplicateIds(s) {
+  const repaired = [];
+  const collections = [['PL', s.parcels], ['P', s.projects], ['A', s.assets],
+    ['L', s.loans], ['S', s.staff], ['O', s.offers], ['JV', s.jvs]];
+  for (const [prefix, list] of collections) {
+    if (!Array.isArray(list)) continue;
+    const seen = new Set();
+    for (const item of list) {
+      if (!item) continue;
+      if (!item.id || seen.has(item.id)) {
+        const old = item.id;
+        item.id = nextId(s, prefix);
+        repaired.push(`${old || '(missing)'} -> ${item.id}`);
+      }
+      seen.add(item.id);
+    }
+  }
+  return repaired;
+}
+
+/**
  * Any two things sharing an id is a corrupted save. Report it rather than let the game
  * quietly operate on the wrong object.
  */

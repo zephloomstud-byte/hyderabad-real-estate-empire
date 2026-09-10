@@ -8,7 +8,7 @@ import { TIMELINE, regimeAt } from '../data/history.js';
 import { BY_ID, DEFECTS } from '../data/geo.js';
 import { BUILD_TYPES, LAYOUT_TYPES, ROLES, LENDERS } from '../data/costs.js';
 import { EVENTS } from '../data/events.js';
-import { COMPETITORS, FIRST_NAMES, SURNAMES, newGame, nextId, reseedIds, findDuplicateIds } from './state.js';
+import { COMPETITORS, FIRST_NAMES, SURNAMES, newGame, nextId, reseedIds, findDuplicateIds, repairDuplicateIds } from './state.js';
 import { LOCALITIES } from '../data/geo.js';
 import {
   macroAt, landRate, rentRate, salePrice, capRate, costIndex, dutyRate, salaryIndex,
@@ -56,15 +56,16 @@ export function refresh(s) {
   // Saves written before ids were persisted carry colliding identifiers. Lift the
   // sequences above whatever is already in use so nothing new can collide, and say so
   // if the damage was already done.
-  if (!s.seq) {
+  if (!s.idsRepaired) {
     reseedIds(s);
-    const dupes = findDuplicateIds(s);
-    if (dupes.length) {
+    const repaired = repairDuplicateIds(s);
+    s.idsRepaired = true;
+    if (repaired.length) {
       s.news.push({
         m: s.month, tag: 'NOTE', head: 'Records reconciled',
-        body: `A fault in an earlier version reused ${dupes.length} internal reference${dupes.length === 1 ? '' : 's'} after a page reload, `
-          + 'which could make a button act on the wrong parcel or project. The numbering has been repaired and cannot recur. '
-          + 'Anything already affected stays as it is; nothing has been lost.',
+        body: `A fault in an earlier version reused ${repaired.length} internal reference${repaired.length === 1 ? '' : 's'} after a page reload, `
+          + 'which made some buttons act on the wrong parcel or project — most visibly, land you clearly owned reporting that it had nothing left to build on. '
+          + 'The numbering has been renumbered and cannot collide again. Nothing has been lost and no holding has changed hands.',
       });
     }
   }
