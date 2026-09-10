@@ -5,9 +5,8 @@
 
 import { clamp } from '../core/util.js';
 import { LENDERS } from '../data/costs.js';
-import { emiFor } from './state.js';
+import { emiFor, nextId } from './state.js';
 
-let loanSeq = 0;
 
 export function availableLenders(s) {
   return Object.values(LENDERS).filter((l) => (l.from ?? 0) <= s.month);
@@ -83,7 +82,7 @@ export function creditDecision(lender, requested, collateralValue, s) {
 
 export function takeLoan(s, lender, amount, rate, tenure, opts = {}) {
   const loan = {
-    id: `L${++loanSeq}`,
+    id: nextId(s, 'L'),
     lender: lender.name, kind: lender.kind, lenderId: lender.id,
     principal: amount, outstanding: amount, rate, tenure,
     taken: s.month, emi: emiFor(amount, rate, tenure),

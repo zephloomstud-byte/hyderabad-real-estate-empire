@@ -187,3 +187,65 @@ export function clearSave() {
 }
 
 export const ZONES = [...new Set(LOCALITIES.map((l) => l.zone))];
+
+// ---------------------------------------------------------------- identity
+
+/**
+ * Identifiers must be unique for the life of a save, not the life of a page.
+ *
+ * These counters used to live in module scope, which meant they reset to zero on every
+ * reload. A game reloaded after buying twelve parcels would mint the thirteenth as PL1,
+ * colliding with the first — and every lookup by id thereafter found the wrong object.
+ * The visible symptom was clicking Build on four acres of Shamshabad and being told the
+ * parcel had nothing left, because the code was looking at a different, exhausted plot.
+ *
+ * Keeping the counters in the saved state fixes it for good: the sequence is part of the
+ * game, not part of the session.
+ */
+export function nextId(s, prefix) {
+  if (!s.seq) s.seq = {};
+  s.seq[prefix] = (s.seq[prefix] || 0) + 1;
+  return `${prefix}${s.seq[prefix]}`;
+}
+
+/**
+ * Repair a save written before the counters were persisted: set each sequence above the
+ * highest id already in use, so nothing new can collide with anything old.
+ */
+export function reseedIds(s) {
+  if (!s.seq) s.seq = {};
+  const bump = (prefix, list) => {
+    let max = s.seq[prefix] || 0;
+    for (const item of list || []) {
+      const m = String(item && item.id || '').match(new RegExp(`^${prefix}(\d+)$`));
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+    s.seq[prefix] = max;
+  };
+  bump('PL', s.parcels);
+  bump('P', s.projects);
+  bump('A', s.assets);
+  bump('L', s.loans);
+  bump('S', s.staff);
+  bump('O', s.offers);
+  bump('JV', s.jvs);
+  return s;
+}
+
+/**
+ * Any two things sharing an id is a corrupted save. Report it rather than let the game
+ * quietly operate on the wrong object.
+ */
+export function findDuplicateIds(s) {
+  const dupes = [];
+  for (const [name, list] of [['parcels', s.parcels], ['projects', s.projects],
+    ['assets', s.assets], ['loans', s.loans], ['staff', s.staff], ['offers', s.offers]]) {
+    const seen = new Set();
+    for (const item of list || []) {
+      if (!item || !item.id) continue;
+      if (seen.has(item.id)) dupes.push(`${name}:${item.id}`);
+      seen.add(item.id);
+    }
+  }
+  return dupes;
+}

@@ -6,7 +6,7 @@ import { MACRO, SHOCKS, CPI_INDEX, regimeAt } from '../data/history.js';
 import { LOCALITIES, BY_ID, RENT_TRACK, DEFECTS } from '../data/geo.js';
 import { COST_TRACK, DUTY_TRACK, FAR_TRACK, FAR_AIRPORT, MATERIALS, WAGES, WAGE_TRACK,
   SALARY_TRACK, BUILD_TYPES, LAYOUT_TYPES, TAX_TRACK } from '../data/costs.js';
-import { FIRST_NAMES, SURNAMES } from './state.js';
+import { FIRST_NAMES, SURNAMES, nextId } from './state.js';
 import { intelLevel, fuzzRate, surveyCost, INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN } from './intel.js';
 
 /** Blend the annual macro series into a monthly reading, applying month-keyed shocks. */
@@ -179,8 +179,7 @@ export function marketView(m, s) {
 
 // ---------------------------------------------------------------------------- offers
 
-let offerSeq = 1000;
-const nextId = () => `O${++offerSeq}`;
+// Offer ids come from the same persisted sequence as everything else.
 
 function personName(rng) {
   return `${rng.pick(FIRST_NAMES)} ${rng.pick(SURNAMES)}`;
@@ -234,7 +233,7 @@ export function makeLandOffer(m, s, rng, opts = {}) {
   const price = askRate * areaSqYd;
 
   return {
-    id: nextId(), kind: 'land', locality: loc.id, localityName: loc.name,
+    id: nextId(s, 'O'), kind: 'land', locality: loc.id, localityName: loc.name,
     areaSqYd, askRate, price, seller: personName(rng), motive,
     createdAt: m, expiresAt: m + rng.int(2, 6),
     defects, known: [], ddDone: 0, ddSpend: 0,
@@ -252,7 +251,7 @@ export function makeDevAgreement(m, s, rng) {
   const ownerShare = rng.range(0.32, 0.48);
   const defects = rollDefects(loc, rng, 0.1);
   return {
-    id: nextId(), kind: 'devagreement', locality: loc.id, localityName: loc.name,
+    id: nextId(s, 'O'), kind: 'devagreement', locality: loc.id, localityName: loc.name,
     areaSqYd, ownerShare: Math.round(ownerShare * 100) / 100,
     price: 0, seller: personName(rng),
     createdAt: m, expiresAt: m + rng.int(2, 5),
@@ -277,7 +276,7 @@ export function makeAssetOffer(m, s, rng) {
   const price = Math.round(noi / cr / 10000) * 10000;
   const defects = rollDefects(loc, rng, 0.05);
   return {
-    id: nextId(), kind: 'asset', locality: loc.id, localityName: loc.name,
+    id: nextId(s, 'O'), kind: 'asset', locality: loc.id, localityName: loc.name,
     use, sqFt, occupancy: occ, rentPerSqFt: rate, price, noi,
     seller: personName(rng), createdAt: m, expiresAt: m + rng.int(2, 5),
     defects, known: [], ddDone: 0, ddSpend: 0,

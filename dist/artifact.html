@@ -1221,6 +1221,49 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     }
   }
   var ZONES = [...new Set(LOCALITIES.map((l) => l.zone))];
+  function nextId(s, prefix) {
+    if (!s.seq) s.seq = {};
+    s.seq[prefix] = (s.seq[prefix] || 0) + 1;
+    return `${prefix}${s.seq[prefix]}`;
+  }
+  function reseedIds(s) {
+    if (!s.seq) s.seq = {};
+    const bump = (prefix, list) => {
+      let max = s.seq[prefix] || 0;
+      for (const item of list || []) {
+        const m = String(item && item.id || "").match(new RegExp(`^${prefix}(d+)$`));
+        if (m) max = Math.max(max, Number(m[1]));
+      }
+      s.seq[prefix] = max;
+    };
+    bump("PL", s.parcels);
+    bump("P", s.projects);
+    bump("A", s.assets);
+    bump("L", s.loans);
+    bump("S", s.staff);
+    bump("O", s.offers);
+    bump("JV", s.jvs);
+    return s;
+  }
+  function findDuplicateIds(s) {
+    const dupes = [];
+    for (const [name, list] of [
+      ["parcels", s.parcels],
+      ["projects", s.projects],
+      ["assets", s.assets],
+      ["loans", s.loans],
+      ["staff", s.staff],
+      ["offers", s.offers]
+    ]) {
+      const seen = /* @__PURE__ */ new Set();
+      for (const item of list || []) {
+        if (!item || !item.id) continue;
+        if (seen.has(item.id)) dupes.push(`${name}:${item.id}`);
+        seen.add(item.id);
+      }
+    }
+    return dupes;
+  }
 
   // src/data/costs.js
   var A2 = (pairs) => pairs.map(([year, v]) => ({ year, v }));
@@ -3635,8 +3678,6 @@ A proper refurbishment is about ${money(cost)}.`,
       };
     });
   }
-  var offerSeq = 1e3;
-  var nextId = () => `O${++offerSeq}`;
   function personName(rng) {
     return `${rng.pick(FIRST_NAMES)} ${rng.pick(SURNAMES)}`;
   }
@@ -3677,7 +3718,7 @@ A proper refurbishment is about ${money(cost)}.`,
     const askRate = Math.round(rate * (1 - discount));
     const price = askRate * areaSqYd;
     return {
-      id: nextId(),
+      id: nextId(s, "O"),
       kind: "land",
       locality: loc.id,
       localityName: loc.name,
@@ -3705,7 +3746,7 @@ A proper refurbishment is about ${money(cost)}.`,
     const ownerShare = rng.range(0.32, 0.48);
     const defects = rollDefects(loc, rng, 0.1);
     return {
-      id: nextId(),
+      id: nextId(s, "O"),
       kind: "devagreement",
       locality: loc.id,
       localityName: loc.name,
@@ -3737,7 +3778,7 @@ A proper refurbishment is about ${money(cost)}.`,
     const price = Math.round(noi / cr / 1e4) * 1e4;
     const defects = rollDefects(loc, rng, 0.05);
     return {
-      id: nextId(),
+      id: nextId(s, "O"),
       kind: "asset",
       locality: loc.id,
       localityName: loc.name,
@@ -3818,7 +3859,6 @@ A proper refurbishment is about ${money(cost)}.`,
   }
 
   // src/sim/finance.js
-  var loanSeq = 0;
   function availableLenders(s) {
     return Object.values(LENDERS).filter((l) => (l.from ?? 0) <= s.month);
   }
@@ -3879,7 +3919,7 @@ A proper refurbishment is about ${money(cost)}.`,
   }
   function takeLoan(s, lender, amount, rate, tenure, opts = {}) {
     const loan = {
-      id: `L${++loanSeq}`,
+      id: nextId(s, "L"),
       lender: lender.name,
       kind: lender.kind,
       lenderId: lender.id,
@@ -4008,8 +4048,6 @@ A proper refurbishment is about ${money(cost)}.`,
   }
 
   // src/sim/build.js
-  var projSeq = 0;
-  var assetSeq = 0;
   function sCurve(i, n) {
     const t0 = i / n, t1 = (i + 1) / n;
     const f = (t) => 1 / (1 + Math.exp(-9 * (t - 0.5)));
@@ -4102,7 +4140,7 @@ A proper refurbishment is about ${money(cost)}.`,
     const landUsed = landConsumedBy(parcel, sqFt, s);
     const landShare = Math.round((parcel.allInCost || 0) * (landUsed / Math.max(1, parcel.areaSqYd)));
     const p = {
-      id: `P${++projSeq}`,
+      id: nextId(s, "P"),
       name: name || `${bt.name}, ${BY_ID[parcel.locality].name}`,
       parcelId: parcel.id,
       locality: parcel.locality,
@@ -4143,7 +4181,7 @@ A proper refurbishment is about ${money(cost)}.`,
     const landUsed = Math.min(freeSqYd(parcel), grossSqYd);
     const landShare = Math.round((parcel.allInCost || 0) * (landUsed / Math.max(1, parcel.areaSqYd)));
     const p = {
-      id: `P${++projSeq}`,
+      id: nextId(s, "P"),
       name: name || `${lt.name}, ${BY_ID[parcel.locality].name}`,
       parcelId: parcel.id,
       locality: parcel.locality,
@@ -4269,7 +4307,7 @@ A proper refurbishment is about ${money(cost)}.`,
       const use = p.use;
       const rate = rentRate(p.locality, use, s.month, s.flags) || rentRate(p.locality, "res", s.month, s.flags);
       s.assets.push({
-        id: `A${++assetSeq}`,
+        id: nextId(s, "A"),
         name: p.name,
         locality: p.locality,
         use,
@@ -4621,8 +4659,6 @@ A proper refurbishment is about ${money(cost)}.`,
   }
 
   // src/sim/engine.js
-  var parcelSeq = 0;
-  var staffSeq = 0;
   function startGame(seedText, opts = {}) {
     const s = newGame(seedText, opts);
     refresh(s);
@@ -4637,6 +4673,18 @@ A proper refurbishment is about ${money(cost)}.`,
   }
   function refresh(s) {
     if (!s.intel) s.intel = initialIntel();
+    if (!s.seq) {
+      reseedIds(s);
+      const dupes = findDuplicateIds(s);
+      if (dupes.length) {
+        s.news.push({
+          m: s.month,
+          tag: "NOTE",
+          head: "Records reconciled",
+          body: `A fault in an earlier version reused ${dupes.length} internal reference${dupes.length === 1 ? "" : "s"} after a page reload, which could make a button act on the wrong parcel or project. The numbering has been repaired and cannot recur. Anything already affected stays as it is; nothing has been lost.`
+        });
+      }
+    }
     s.macro = macroAt(s.month);
     if (s.demandOverride) s.macro.demand *= s.demandOverride;
     s.macro.demand *= clamp(s.bizConfidence, 0.7, 1.3);
@@ -4658,7 +4706,7 @@ A proper refurbishment is about ${money(cost)}.`,
     if (s.cash < total) return { ok: false, msg: `You are short by ${money(total - s.cash)}. Registration and duty alone are ${money(dutyAmt + legal)}.` };
     s.cash -= total;
     const p = {
-      id: `PL${++parcelSeq}`,
+      id: nextId(s, "PL"),
       owned: true,
       locality: offer.locality,
       areaSqYd: offer.areaSqYd,
@@ -4693,7 +4741,7 @@ A proper refurbishment is about ${money(cost)}.`,
     if (s.cash < advance) return { ok: false, msg: "You cannot fund the refundable advance." };
     s.cash -= advance;
     const p = {
-      id: `PL${++parcelSeq}`,
+      id: nextId(s, "PL"),
       owned: true,
       isDev: true,
       locality: offer.locality,
@@ -4727,7 +4775,7 @@ A proper refurbishment is about ${money(cost)}.`,
     if (s.cash < total) return { ok: false, msg: `Short by ${money(total - s.cash)} including ${Math.round(duty * 100)}% duty.` };
     s.cash -= total;
     s.assets.push({
-      id: `A${Date.now() % 1e5}`,
+      id: nextId(s, "A"),
       name: offer.label,
       locality: offer.locality,
       use: offer.use,
@@ -5118,7 +5166,7 @@ A proper refurbishment is about ${money(cost)}.`,
     const rng = getRng(s);
     const salary = Math.round(role.base * salaryIndex(s.month) * rng.range(0.9, 1.2));
     const person = {
-      id: `S${++staffSeq}`,
+      id: nextId(s, "S"),
       role: roleKey,
       roleName: role.name,
       impact: role.impact,
@@ -5544,9 +5592,9 @@ He proposes: he contributes the land, you contribute the entire construction cos
               label: `Accept at ${Math.round(share * 100)}%`,
               hint: "No land capital required. A partner who can freeze you.",
               do: ({ fx: f }) => {
-                const p = { id: `PL${++parcelSeq}`, owned: true, isJv: true, locality: loc, areaSqYd, label: `JV land, ${BY_ID[loc].name}`, purchased: s.month, price: 0, duty: 0, legal: 0, allInCost: 0, defects: [], known: [], resolved: [], devAgreement: { ownerShare: share, owner: partner } };
+                const p = { id: nextId(s, "PL"), owned: true, isJv: true, locality: loc, areaSqYd, label: `JV land, ${BY_ID[loc].name}`, purchased: s.month, price: 0, duty: 0, legal: 0, allInCost: 0, defects: [], known: [], resolved: [], devAgreement: { ownerShare: share, owner: partner } };
                 s.parcels.push(p);
-                s.jvs.push({ id: `JV${s.jvs.length + 1}`, name: `JV at ${BY_ID[loc].name}`, partner, share, partnerCapital: value, parcelId: p.id });
+                s.jvs.push({ id: nextId(s, "JV"), name: `JV at ${BY_ID[loc].name}`, partner, share, partnerCapital: value, parcelId: p.id });
                 f.rel("landowners", 8);
               }
             },
@@ -5556,9 +5604,9 @@ He proposes: he contributes the land, you contribute the entire construction cos
               do: ({ fx: f, rng: rr }) => {
                 if (rr.f() < s.skills.negotiation / 130) {
                   const ns = share - 0.1;
-                  const p = { id: `PL${++parcelSeq}`, owned: true, isJv: true, locality: loc, areaSqYd, label: `JV land, ${BY_ID[loc].name}`, purchased: s.month, price: 0, duty: 0, legal: 0, allInCost: 0, defects: [], known: [], resolved: [], devAgreement: { ownerShare: ns, owner: partner } };
+                  const p = { id: nextId(s, "PL"), owned: true, isJv: true, locality: loc, areaSqYd, label: `JV land, ${BY_ID[loc].name}`, purchased: s.month, price: 0, duty: 0, legal: 0, allInCost: 0, defects: [], known: [], resolved: [], devAgreement: { ownerShare: ns, owner: partner } };
                   s.parcels.push(p);
-                  s.jvs.push({ id: `JV${s.jvs.length + 1}`, name: `JV at ${BY_ID[loc].name}`, partner, share: ns, partnerCapital: value, parcelId: p.id });
+                  s.jvs.push({ id: nextId(s, "JV"), name: `JV at ${BY_ID[loc].name}`, partner, share: ns, partnerCapital: value, parcelId: p.id });
                   f.news(`Agreed at ${Math.round(ns * 100)} per cent.`);
                 } else {
                   f.news("He walked. Somebody else will take it at his number.");

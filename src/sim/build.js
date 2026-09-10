@@ -6,11 +6,10 @@
 import { clamp, SQYD_PER_ACRE } from '../core/util.js';
 import { BUILD_TYPES, LAYOUT_TYPES, CONVERSION_COST_PER_SQYD, APPROVAL_BASE_MONTHS } from '../data/costs.js';
 import { BY_ID } from '../data/geo.js';
+import { nextId } from './state.js';
 import { costIndex, farFor, salePrice, rentRate, capRate, absorptionRate,
   landRate, plotPrice, plotAbsorption } from './market.js';
 
-let projSeq = 0;
-let assetSeq = 0;
 
 /** Fraction of total cost spent in month i of an n-month programme (classic S-curve). */
 export function sCurve(i, n) {
@@ -140,7 +139,7 @@ export function startProject(s, parcel, typeId, sqFt, mode, name) {
   // Land cost attributable to this phase, so each phase carries its own share.
   const landShare = Math.round((parcel.allInCost || 0) * (landUsed / Math.max(1, parcel.areaSqYd)));
   const p = {
-    id: `P${++projSeq}`,
+    id: nextId(s, 'P'),
     name: name || `${bt.name}, ${BY_ID[parcel.locality].name}`,
     parcelId: parcel.id, locality: parcel.locality, type: typeId, use: bt.use,
     sqFt, mode,
@@ -169,7 +168,7 @@ export function startLayout(s, parcel, typeId, grossSqYd, name) {
   const landUsed = Math.min(freeSqYd(parcel), grossSqYd);
   const landShare = Math.round((parcel.allInCost || 0) * (landUsed / Math.max(1, parcel.areaSqYd)));
   const p = {
-    id: `P${++projSeq}`,
+    id: nextId(s, 'P'),
     name: name || `${lt.name}, ${BY_ID[parcel.locality].name}`,
     parcelId: parcel.id, locality: parcel.locality, type: typeId, use: 'plots',
     isLayout: true, grossSqYd: landUsed, sqFt: est.saleableSqYd, mode: 'sell',
@@ -299,7 +298,7 @@ export function completeProject(p, s) {
     const use = p.use;
     const rate = rentRate(p.locality, use, s.month, s.flags) || rentRate(p.locality, 'res', s.month, s.flags);
     s.assets.push({
-      id: `A${++assetSeq}`,
+      id: nextId(s, 'A'),
       name: p.name, locality: p.locality, use, type: p.type, sqFt: ownSqFt,
       rentPerSqFt: rate * (0.85 + p.quality * 0.3),
       occupancy: 0.0, targetOcc: 0.9,

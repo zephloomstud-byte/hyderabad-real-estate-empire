@@ -8,7 +8,7 @@ import { TIMELINE, regimeAt } from '../data/history.js';
 import { BY_ID, DEFECTS } from '../data/geo.js';
 import { BUILD_TYPES, LAYOUT_TYPES, ROLES, LENDERS } from '../data/costs.js';
 import { EVENTS } from '../data/events.js';
-import { COMPETITORS, FIRST_NAMES, SURNAMES, newGame } from './state.js';
+import { COMPETITORS, FIRST_NAMES, SURNAMES, newGame, nextId, reseedIds, findDuplicateIds } from './state.js';
 import { LOCALITIES } from '../data/geo.js';
 import {
   macroAt, landRate, rentRate, salePrice, capRate, costIndex, dutyRate, salaryIndex,
@@ -26,8 +26,6 @@ import { balanceSheet, computeRatios, closeYear, landValue } from './accounting.
 import { tickIntel, buySurvey, intelLevel, surveyCost, fuzzRate, initialIntel,
   INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN } from './intel.js';
 
-let parcelSeq = 0;
-let staffSeq = 0;
 
 // ------------------------------------------------------------------ new game
 
@@ -55,6 +53,21 @@ export function startGame(seedText, opts = {}) {
 
 export function refresh(s) {
   if (!s.intel) s.intel = initialIntel();
+  // Saves written before ids were persisted carry colliding identifiers. Lift the
+  // sequences above whatever is already in use so nothing new can collide, and say so
+  // if the damage was already done.
+  if (!s.seq) {
+    reseedIds(s);
+    const dupes = findDuplicateIds(s);
+    if (dupes.length) {
+      s.news.push({
+        m: s.month, tag: 'NOTE', head: 'Records reconciled',
+        body: `A fault in an earlier version reused ${dupes.length} internal reference${dupes.length === 1 ? '' : 's'} after a page reload, `
+          + 'which could make a button act on the wrong parcel or project. The numbering has been repaired and cannot recur. '
+          + 'Anything already affected stays as it is; nothing has been lost.',
+      });
+    }
+  }
   s.macro = macroAt(s.month);
   if (s.demandOverride) s.macro.demand *= s.demandOverride;
   s.macro.demand *= clamp(s.bizConfidence, 0.7, 1.3);
@@ -82,7 +95,7 @@ export function buyLand(s, offer, opts = {}) {
 
   s.cash -= total;
   const p = {
-    id: `PL${++parcelSeq}`, owned: true,
+    id: nextId(s, 'PL'), owned: true,
     locality: offer.locality, areaSqYd: offer.areaSqYd,
     label: offer.label, purchased: s.month,
     price, duty: dutyAmt, legal, allInCost: total,
@@ -108,7 +121,7 @@ export function signDevAgreement(s, offer) {
   if (s.cash < advance) return { ok: false, msg: 'You cannot fund the refundable advance.' };
   s.cash -= advance;
   const p = {
-    id: `PL${++parcelSeq}`, owned: true, isDev: true,
+    id: nextId(s, 'PL'), owned: true, isDev: true,
     locality: offer.locality, areaSqYd: offer.areaSqYd,
     label: offer.label, purchased: s.month,
     price: 0, duty: 0, legal: 0, allInCost: advance,
@@ -132,7 +145,7 @@ export function buyAssetOffer(s, offer) {
   if (s.cash < total) return { ok: false, msg: `Short by ${money(total - s.cash)} including ${Math.round(duty * 100)}% duty.` };
   s.cash -= total;
   s.assets.push({
-    id: `A${Date.now() % 100000}`, name: offer.label, locality: offer.locality,
+    id: nextId(s, 'A'), name: offer.label, locality: offer.locality,
     use: offer.use, sqFt: offer.sqFt, rentPerSqFt: offer.rentPerSqFt,
     occupancy: offer.occupancy, targetOcc: 0.92, opexRatio: 0.24, quality: 0.6,
     bookCost: total, completed: s.month, deposit: Math.round(offer.noi / 12 * 3), rentHolidayLeft: 0,
@@ -564,7 +577,7 @@ export function hire(s, roleKey) {
   const rng = getRng(s);
   const salary = Math.round(role.base * salaryIndex(s.month) * rng.range(0.9, 1.2));
   const person = {
-    id: `S${++staffSeq}`, role: roleKey, roleName: role.name, impact: role.impact,
+    id: nextId(s, 'S'), role: roleKey, roleName: role.name, impact: role.impact,
     name: `${rng.pick(FIRST_NAMES)} ${rng.pick(SURNAMES)}`,
     salary, skill: Math.round(clamp(rng.normal(role.skillCap * 0.75, 12), 20, role.skillCap)),
     loyalty: Math.round(rng.range(45, 75)), corruptionRisk: rng.range(0.02, 0.16),
@@ -877,18 +890,18 @@ function buildFx(s, rng) {
         choices: [
           { label: `Accept at ${Math.round(share * 100)}%`, hint: 'No land capital required. A partner who can freeze you.',
             do: ({ fx: f }) => {
-              const p = { id: `PL${++parcelSeq}`, owned: true, isJv: true, locality: loc, areaSqYd, label: `JV land, ${BY_ID[loc].name}`, purchased: s.month, price: 0, duty: 0, legal: 0, allInCost: 0, defects: [], known: [], resolved: [], devAgreement: { ownerShare: share, owner: partner } };
+              const p = { id: nextId(s, 'PL'), owned: true, isJv: true, locality: loc, areaSqYd, label: `JV land, ${BY_ID[loc].name}`, purchased: s.month, price: 0, duty: 0, legal: 0, allInCost: 0, defects: [], known: [], resolved: [], devAgreement: { ownerShare: share, owner: partner } };
               s.parcels.push(p);
-              s.jvs.push({ id: `JV${s.jvs.length + 1}`, name: `JV at ${BY_ID[loc].name}`, partner, share, partnerCapital: value, parcelId: p.id });
+              s.jvs.push({ id: nextId(s, 'JV'), name: `JV at ${BY_ID[loc].name}`, partner, share, partnerCapital: value, parcelId: p.id });
               f.rel('landowners', 8);
             } },
           { label: 'Counter at a lower share', hint: 'Your negotiation skill decides this.',
             do: ({ fx: f, rng: rr }) => {
               if (rr.f() < s.skills.negotiation / 130) {
                 const ns = share - 0.1;
-                const p = { id: `PL${++parcelSeq}`, owned: true, isJv: true, locality: loc, areaSqYd, label: `JV land, ${BY_ID[loc].name}`, purchased: s.month, price: 0, duty: 0, legal: 0, allInCost: 0, defects: [], known: [], resolved: [], devAgreement: { ownerShare: ns, owner: partner } };
+                const p = { id: nextId(s, 'PL'), owned: true, isJv: true, locality: loc, areaSqYd, label: `JV land, ${BY_ID[loc].name}`, purchased: s.month, price: 0, duty: 0, legal: 0, allInCost: 0, defects: [], known: [], resolved: [], devAgreement: { ownerShare: ns, owner: partner } };
                 s.parcels.push(p);
-                s.jvs.push({ id: `JV${s.jvs.length + 1}`, name: `JV at ${BY_ID[loc].name}`, partner, share: ns, partnerCapital: value, parcelId: p.id });
+                s.jvs.push({ id: nextId(s, 'JV'), name: `JV at ${BY_ID[loc].name}`, partner, share: ns, partnerCapital: value, parcelId: p.id });
                 f.news(`Agreed at ${Math.round(ns * 100)} per cent.`);
               } else { f.news('He walked. Somebody else will take it at his number.'); f.rel('landowners', -3); }
             } },
