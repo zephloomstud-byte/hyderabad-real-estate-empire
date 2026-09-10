@@ -51,10 +51,31 @@ export const num = (v, n = 0) => indianGroup(round(v, n));
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const START_YEAR = 1995;
 export const END_MONTH = (2020 - START_YEAR) * 12 + 2;          // March 2020
-export const EXTENDED_END_MONTH = (2030 - START_YEAR) * 12 + 11; // December 2030
 
-/** The last playable month for this particular run. */
-export const horizonOf = (s) => (s && s.extended ? EXTENDED_END_MONTH : END_MONTH);
+/**
+ * How far a run may go. The base game stops in March 2020 where the record it models
+ * stops; a player may then extend to 2030, and from there to 2050. Each step is a
+ * deliberate choice because each step is a further step away from anything real.
+ */
+export const HORIZONS = [
+  { year: 2020, month: END_MONTH, label: 'March 2020' },
+  { year: 2030, month: (2030 - START_YEAR) * 12 + 11, label: 'December 2030' },
+  { year: 2050, month: (2050 - START_YEAR) * 12 + 11, label: 'December 2050' },
+];
+export const EXTENDED_END_MONTH = HORIZONS[1].month;
+
+export const horizonOf = (s) => {
+  const y = s && s.horizonYear;
+  const h = HORIZONS.find((x) => x.year === y);
+  if (h) return h.month;
+  return s && s.extended ? HORIZONS[1].month : END_MONTH;   // saves from before horizonYear
+};
+
+/** The next horizon a run could be extended to, or null at the end of the road. */
+export const nextHorizon = (s) => {
+  const current = (s && s.horizonYear) || (s && s.extended ? 2030 : 2020);
+  return HORIZONS.find((h) => h.year > current) || null;
+};
 
 export const yearOf = (m) => START_YEAR + Math.floor(m / 12);
 export const monthOf = (m) => m % 12;

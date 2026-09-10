@@ -9,6 +9,7 @@ import { COST_TRACK, DUTY_TRACK, FAR_TRACK, FAR_AIRPORT, MATERIALS, WAGES, WAGE_
 import { FIRST_NAMES, SURNAMES, nextId } from './state.js';
 import { intelLevel, fuzzRate, surveyCost, INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN } from './intel.js';
 import { CAP_2020S, UNAPPROVED_2020S } from '../data/history2020s.js';
+import { CAP_2050 } from '../data/history2050.js';
 
 /** Blend the annual macro series into a monthly reading, applying month-keyed shocks. */
 export function macroAt(m) {
@@ -140,6 +141,7 @@ export function capRate(use, m, s) {
     { year: 2007, v: 0.095 }, { year: 2009, v: 0.115 }, { year: 2013, v: 0.105 },
     { year: 2016, v: 0.090 }, { year: 2020, v: 0.078 },
     ...CAP_2020S.map(([year, v]) => ({ year, v })),
+    ...CAP_2050.map(([year, v]) => ({ year, v })),
   ], m);
   const useAdj = { office: 0, retail: 0.005, res: 0.02, industrial: 0.012 }[use] || 0;
   const cyc = (1 - macro.demand) * 0.02;
@@ -155,9 +157,14 @@ export function wage(key, m) { return WAGES[key] * wageIndex(m); }
 
 export function taxRate(kind, m) { return anchorAt(TAX_TRACK[kind], m); }
 
+/** Localities that exist as a market at this date. Future City is not a place in 1997. */
+export function localitiesAt(m) {
+  return LOCALITIES.filter((l) => (l.from ?? 0) <= m);
+}
+
 /** What the player is allowed to see about a locality at this date. */
 export function marketView(m, s) {
-  return LOCALITIES.map((loc) => {
+  return localitiesAt(m).map((loc) => {
     const rate = landRate(loc.id, m, s);
     const prev = m >= 12 ? landRate(loc.id, m - 12, s) : rate;
     const level = intelLevel(s, loc.id);
@@ -205,7 +212,7 @@ export function rollDefects(loc, rng, discountPressure = 0) {
 export function makeLandOffer(m, s, rng, opts = {}) {
   const pool = opts.locality
     ? [BY_ID[opts.locality]]
-    : LOCALITIES.filter((l) => {
+    : localitiesAt(m).filter((l) => {
       if (opts.zone && l.zone !== opts.zone) return false;
       // Cheap far-flung land only shows up if the player has been looking that way.
       if (l.tags.includes('far') && s.skills.realestate < 60 && rng.chance(0.6)) return false;
@@ -247,7 +254,7 @@ export function makeLandOffer(m, s, rng, opts = {}) {
 
 /** Development agreement: no land cost, a share of the built area to the owner. */
 export function makeDevAgreement(m, s, rng) {
-  const pool = LOCALITIES.filter((l) => ['core', 'northwest', 'east'].includes(l.zone));
+  const pool = localitiesAt(m).filter((l) => ['core', 'northwest', 'east'].includes(l.zone));
   const loc = rng.pick(pool);
   const areaSqYd = Math.round(rng.range(400, 2200) / 10) * 10;
   const ownerShare = rng.range(0.32, 0.48);
@@ -266,7 +273,7 @@ export function makeDevAgreement(m, s, rng) {
 
 /** A ready, income-producing building offered for sale. */
 export function makeAssetOffer(m, s, rng) {
-  const pool = LOCALITIES.filter((l) => l.rentBase.office || l.rentBase.retail);
+  const pool = localitiesAt(m).filter((l) => l.rentBase.office || l.rentBase.retail);
   const loc = rng.pick(pool);
   const use = rng.weighted([['office', 3], ['retail', 2], ['res', 1], ['industrial', 2]]);
   const rate = rentRate(loc.id, use, m, s.flags);

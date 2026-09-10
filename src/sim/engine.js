@@ -3,7 +3,7 @@
 // events are allowed to touch, which keeps all bookkeeping in one auditable place.
 
 import { makeRng } from '../core/rng.js';
-import { clamp, dateLabel, yearOf, money, END_MONTH, EXTENDED_END_MONTH, horizonOf, SQYD_PER_ACRE } from '../core/util.js';
+import { clamp, dateLabel, yearOf, money, END_MONTH, EXTENDED_END_MONTH, horizonOf, nextHorizon, HORIZONS, SQYD_PER_ACRE } from '../core/util.js';
 import { TIMELINE_FULL as TIMELINE, regimeAt } from '../data/history.js';
 import { BY_ID, DEFECTS } from '../data/geo.js';
 import { BUILD_TYPES, LAYOUT_TYPES, ROLES, LENDERS } from '../data/costs.js';
@@ -430,20 +430,33 @@ export function applyForLoan(s, lenderId, amount, collateralIds) {
  * and the interface says which is which rather than pretending otherwise.
  */
 export function continuePast2020(s) {
-  if (s.extended) return { ok: false, msg: 'Already running into the 2020s.' };
+  const next = nextHorizon(s);
+  if (!next) return { ok: false, msg: 'December 2050. There is no more road.' };
+
+  s.horizonYear = next.year;
   s.extended = true;
   s.over = false;
   s.overReason = null;
   s.insolventMonths = 0;
-  s.news.push({
-    m: s.month, tag: 'NOTE', head: 'The story continues',
-    body: 'April 2020. The lockdown is three weeks old, every site in the country is silent and nobody knows how long it lasts. '
-      + 'From here to the end of 2025 the world follows what actually happened — the collapse, the cheapest home loans in Indian history, '
-      + 'the boom that followed them, a change of government in Telangana and the demolitions that came with it. '
-      + 'Beyond 2025 the numbers are a reasoned extrapolation and nothing more. You have until December 2030.',
-  });
+
+  s.news.push(next.year === 2030
+    ? {
+      m: s.month, tag: 'NOTE', head: 'The story continues',
+      body: 'April 2020. The lockdown is three weeks old, every site in the country is silent and nobody knows how long it lasts. '
+        + 'From here to the end of 2025 the world follows what actually happened — the collapse, the cheapest home loans in Indian history, '
+        + 'the boom that followed them, a change of government in Telangana and the demolitions that came with it. '
+        + 'Beyond 2025 the numbers are a reasoned extrapolation and nothing more. You have until December 2030.',
+    }
+    : {
+      m: s.month, tag: 'NOTE', head: 'Twenty more years, and none of them real',
+      body: 'From here to December 2050 there is no record to be faithful to, so this is invention: a property market that behaves the way '
+        + 'property markets behave. There are two serious downturns ahead — a cooling as the 2020s unwind, and a credit-driven correction of '
+        + 'the kind that arrives about once a generation. Land does not go up every year and never has. '
+        + 'A second ring road opens, the frontier moves out past it, and the western corridor stops being where the growth is. '
+        + 'Treat none of it as a forecast.',
+    });
   refresh(s);
-  return { ok: true };
+  return { ok: true, horizon: next };
 }
 
 export function repayLoan(s, loanId, amount) {
@@ -1334,7 +1347,7 @@ function checkEnd(s) {
 // ------------------------------------------------------------------ re-exports for UI
 
 export {
-  END_MONTH, EXTENDED_END_MONTH, horizonOf,
+  END_MONTH, EXTENDED_END_MONTH, horizonOf, nextHorizon, HORIZONS,
   findDuplicateIds, repairDuplicateIds, reseedIds,
   abandonProject, remainingCommitments, fundingSchedule, freeSqYd, landConsumedBy,
   estimateLayout, isLayout, plotPrice, plotAbsorption, lrdAvailable,

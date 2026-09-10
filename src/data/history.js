@@ -4,6 +4,7 @@
 // the Hyderabad demand cycle all originate here.
 
 import { MACRO_2020S, SHOCKS_2020S, TIMELINE_2020S } from './history2020s.js';
+import { MACRO_2050, SHOCKS_2050, TIMELINE_2050 } from './history2050.js';
 
 export const MACRO = {
   //          cpi%   gdp%   plr%   usdinr  credit  hydDemand
@@ -36,6 +37,8 @@ export const MACRO = {
   // The 2020s are appended so a player who chooses to carry on past March 2020 has real
   // ground to walk on. Everything above this line is the historical record.
   ...MACRO_2020S,
+  // 2031 onward is invented outright. See history2050.js.
+  ...MACRO_2050,
 };
 
 /** The last year for which the series is defined. */
@@ -60,6 +63,7 @@ export const SHOCKS = {
   284: { credit: 0.28 }, 285: { credit: 0.26 },                        // IL&FS default
   302: { demand: 0.35, credit: 0.30 },
   ...SHOCKS_2020S,
+  ...SHOCKS_2050,
 };
 
 // The chronicle. These arrive as news and, where flagged, change the world.
@@ -267,7 +271,7 @@ export const TIMELINE = [
 ];
 
 // Governing regimes: how approvals behave and where the pressure comes from.
-export const TIMELINE_FULL = [...TIMELINE, ...TIMELINE_2020S];
+export const TIMELINE_FULL = [...TIMELINE, ...TIMELINE_2020S, ...TIMELINE_2050];
 
 export const REGIMES = {
   ntr: { key: 'ntr', name: 'N. T. Rama Rao (TDP)', approvalSpeed: 0.85, pressure: 0.50, focus: 'Welfare and prohibition' },

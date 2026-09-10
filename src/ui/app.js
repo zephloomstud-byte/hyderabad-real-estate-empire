@@ -16,7 +16,7 @@ import {
   repayLoan, quotePrepayment, remainingTenure, interestIfHeld, brokerDeal, startGame,
   estimateLayout, isLayout, plotPrice,
   applyForRegularisation, regularisationQuote, lrsWindow, askBrokers, BRIEFS,
-  findDuplicateIds, repairDuplicateIds, reseedIds, freeSqYd as freeOf, continuePast2020,
+  findDuplicateIds, repairDuplicateIds, reseedIds, freeSqYd as freeOf, continuePast2020, nextHorizon,
   quoteLRD, takeLRD, lrdAvailable,
   commissionSurvey, intelLevel, surveyCost, INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN,
 } from '../sim/engine.js';
@@ -1351,11 +1351,12 @@ function showEnding() {
   const nwUsd = S.netWorth / S.macro.usd;
   const reasons = {
     time: 'March 2020. Twenty-five years and three months.',
-    extendedTime: 'December 2030. Thirty-six years.',
+    extendedTime: `${dateLabel(S.month)}. ${Math.floor(S.month / 12)} years.`,
     insolvent: 'The company failed.',
     health: 'Your body stopped before the company did.',
   };
-  const canContinue = S.overReason === 'time' && !S.extended;
+  const onward = (S.overReason === 'time' || S.overReason === 'extendedTime') ? nextHorizon(S) : null;
+  const canContinue = !!onward;
   const verdict = () => {
     if (S.overReason === 'insolvent') return 'You are one of the many. Most people who tried this in Hyderabad between 1995 and 2020 ended here, and most of them were not stupid — they were leveraged into a cycle that turned.';
     if (nwUsd > 1e11) return 'One hundred billion dollars. This should not have been possible, and the fact that you did it means either extraordinary judgement or a run of luck the market will not give twice.';
@@ -1393,14 +1394,18 @@ function showEnding() {
     ${canContinue ? `<div class="body" style="padding-top:0">
       <div class="card tight" style="border-left:3px solid var(--accent)">
         <b>You do not have to stop here.</b>
-        <p class="small" style="margin:8px 0 0">The simulation ends in March 2020 because that is where the world it models ends.
-        But the company is still standing, and you can carry it into the 2020s: the lockdown, the cheapest home loans in Indian
-        history and the boom that followed them, a change of government in Telangana, and the demolitions that came after.
-        Real ground to the end of 2025, a reasoned extrapolation after that, and five more years to run.</p>
+        ${onward.year === 2030 ? `<p class="small" style="margin:8px 0 0">The simulation ends in March 2020 because that is where the world it
+        models ends. But the company is still standing, and you can carry it into the 2020s: the lockdown, the cheapest home loans in
+        Indian history and the boom that followed them, a change of government in Telangana, and the demolitions that came after.
+        Real ground to the end of 2025, a reasoned extrapolation after that, and five more years to run.</p>`
+        : `<p class="small" style="margin:8px 0 0">Another twenty years, to December 2050, and none of it real. There is no record left to be
+        faithful to, so what follows is a property market that behaves the way property markets behave: two serious downturns, a second
+        ring road, and a frontier that moves out past it while the western corridor stops being where the growth is.
+        Land does not go up every year. Treat none of it as a forecast.</p>`}
       </div>
     </div>` : ''}
     <div class="foot"><div class="inline">
-      ${canContinue ? '<button class="btn" id="carryon">Carry on into the 2020s</button>' : ''}
+      ${canContinue ? `<button class="btn" id="carryon">Carry on to ${esc(onward.label)}</button>` : ''}
       <button class="btn ghost" id="close">Look through the books</button>
       <button class="btn ${canContinue ? 'ghost' : ''}" id="again">Start again</button>
     </div></div>
@@ -1410,7 +1415,7 @@ function showEnding() {
       continuePast2020(S);
       saveGame(S);
       closeModal();
-      say('April 2020. Sites are silent and nobody knows for how long. You have until December 2030.');
+      say(`The clock runs again. You have until ${onward.label}.`);
       tab = 'dashboard';
       render();
     };

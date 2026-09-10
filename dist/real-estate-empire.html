@@ -317,8 +317,22 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   var START_YEAR = 1995;
   var END_MONTH = (2020 - START_YEAR) * 12 + 2;
-  var EXTENDED_END_MONTH = (2030 - START_YEAR) * 12 + 11;
-  var horizonOf = (s) => s && s.extended ? EXTENDED_END_MONTH : END_MONTH;
+  var HORIZONS = [
+    { year: 2020, month: END_MONTH, label: "March 2020" },
+    { year: 2030, month: (2030 - START_YEAR) * 12 + 11, label: "December 2030" },
+    { year: 2050, month: (2050 - START_YEAR) * 12 + 11, label: "December 2050" }
+  ];
+  var EXTENDED_END_MONTH = HORIZONS[1].month;
+  var horizonOf = (s) => {
+    const y = s && s.horizonYear;
+    const h = HORIZONS.find((x) => x.year === y);
+    if (h) return h.month;
+    return s && s.extended ? HORIZONS[1].month : END_MONTH;
+  };
+  var nextHorizon = (s) => {
+    const current = s && s.horizonYear || (s && s.extended ? 2030 : 2020);
+    return HORIZONS.find((h) => h.year > current) || null;
+  };
   var yearOf = (m) => START_YEAR + Math.floor(m / 12);
   var dateLabel = (m) => `${MONTHS[m % 12]} ${yearOf(m)}`;
   function anchorAt(anchors, absMonth) {
@@ -560,6 +574,301 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     absorption: [[2021, 0.46], [2024, 0.42], [2025, 0.32], [2030, 0.3]]
   };
   var EXTENDED_END_MONTH2 = (2030 - 1995) * 12 + 11;
+
+  // src/data/history2050.js
+  var MACRO_2050 = {
+    //          cpi%   gdp%   plr%   usdinr  credit  demand
+    2031: { cpi: 4.8, gdp: 6, plr: 10, usd: 95.5, credit: 0.62, demand: 1.15 },
+    2032: { cpi: 5.4, gdp: 4.8, plr: 10.8, usd: 98, credit: 0.48, demand: 0.88 },
+    2033: { cpi: 5, gdp: 4.4, plr: 10.5, usd: 101, credit: 0.42, demand: 0.72 },
+    2034: { cpi: 4.4, gdp: 5.6, plr: 9.6, usd: 103, credit: 0.58, demand: 0.92 },
+    2035: { cpi: 4.2, gdp: 6.2, plr: 9.2, usd: 105, credit: 0.7, demand: 1.18 },
+    2036: { cpi: 4.5, gdp: 6.4, plr: 9.3, usd: 107.5, credit: 0.76, demand: 1.34 },
+    2037: { cpi: 5.2, gdp: 6.1, plr: 10, usd: 110, credit: 0.74, demand: 1.42 },
+    2038: { cpi: 6.1, gdp: 4.6, plr: 11.2, usd: 114, credit: 0.44, demand: 1 },
+    2039: { cpi: 5.5, gdp: 3.2, plr: 11, usd: 118.5, credit: 0.28, demand: 0.66 },
+    2040: { cpi: 4.6, gdp: 4.4, plr: 9.8, usd: 121, credit: 0.38, demand: 0.62 },
+    2041: { cpi: 4, gdp: 5.8, plr: 8.9, usd: 123, credit: 0.58, demand: 0.86 },
+    2042: { cpi: 4.1, gdp: 6, plr: 8.8, usd: 125.5, credit: 0.7, demand: 1.1 },
+    2043: { cpi: 4.3, gdp: 5.8, plr: 9, usd: 128, credit: 0.74, demand: 1.28 },
+    2044: { cpi: 4.5, gdp: 5.5, plr: 9.2, usd: 131, credit: 0.74, demand: 1.38 },
+    2045: { cpi: 4.7, gdp: 5.2, plr: 9.5, usd: 134, credit: 0.68, demand: 1.4 },
+    2046: { cpi: 4.9, gdp: 4.6, plr: 9.9, usd: 137.5, credit: 0.56, demand: 1.12 },
+    2047: { cpi: 4.6, gdp: 4.4, plr: 9.6, usd: 140.5, credit: 0.58, demand: 0.98 },
+    2048: { cpi: 4.4, gdp: 4.8, plr: 9.3, usd: 143.5, credit: 0.66, demand: 1.14 },
+    2049: { cpi: 4.3, gdp: 4.6, plr: 9.2, usd: 146.5, credit: 0.68, demand: 1.22 },
+    2050: { cpi: 4.2, gdp: 4.4, plr: 9.2, usd: 149.5, credit: 0.66, demand: 1.2 }
+  };
+  var SHOCKS_2050 = {
+    452: { credit: 0.34, demand: 0.72 },
+    // Sep 2032 — the funding squeeze begins
+    453: { credit: 0.3, demand: 0.66 },
+    460: { demand: 0.58 },
+    // Apr 2033 — the bottom
+    521: { credit: 0.22, demand: 0.7 },
+    // May 2038 — a large lender fails
+    522: { credit: 0.18, demand: 0.58 },
+    523: { credit: 0.18, demand: 0.52 },
+    535: { demand: 0.48 },
+    // Jun 2039 — nothing is registering
+    536: { demand: 0.5 }
+  };
+  var TIMELINE_2050 = [
+    {
+      m: 444,
+      tag: "INFRA",
+      head: "Regional Ring Road opens on the northern arc",
+      body: "January 2032. A second orbital, thirty kilometres beyond the first, through Toopran, Gajwel and Bhongir. Land that was farmland with a bus route is now farmland with an interchange. The pattern is the one the Outer Ring Road set twenty years ago, and everyone in the trade knows it \u2014 which is exactly why the price already moved.",
+      effect: { unlock: "RRR_LIVE" }
+    },
+    {
+      m: 452,
+      tag: "ECONOMY",
+      head: "The money turns off",
+      body: "September 2032. Rates have been climbing for eighteen months and the non-bank lenders that financed most of the last cycle are refinancing at levels that do not work. Land transactions stop first, as they always do. Developers holding inventory discover what it is actually worth.",
+      effect: { crash: true }
+    },
+    {
+      m: 460,
+      tag: "ECONOMY",
+      head: "The bottom, for those who can tell at the time",
+      body: "April 2033. Registrations are at a nine-year low and three listed developers are selling assets to service debt. Anyone with cash is being offered land at prices that will look absurd in five years. Almost nobody has cash.",
+      effect: {}
+    },
+    {
+      m: 478,
+      tag: "INFRA",
+      head: "Future City reaches critical mass",
+      body: "October 2034. What was an announcement in 2024 is now a functioning district: pharmaceutical campuses, a university, and the first residential towers occupied rather than sold. The land south of the Outer Ring Road has done in a decade what Gachibowli did between 1998 and 2008.",
+      effect: { unlock: "FUTURE_LIVE" }
+    },
+    {
+      m: 492,
+      tag: "ECONOMY",
+      head: "Data centres become the largest single source of office-grade demand",
+      body: "January 2036. Power, fibre and land, in that order. Hyderabad has all three and cheaper industrial tariffs than Mumbai. Occupiers sign twenty-year leases on shells nobody would have called real estate in 1995.",
+      effect: { unlock: "DATACENTRE" }
+    },
+    {
+      m: 504,
+      tag: "REGULATION",
+      head: "Groundwater extraction restricted across the western corridor",
+      body: "January 2037. Two dry years and thirty years of building have done what everyone said they would. New projects above a threshold must demonstrate a water source that is not the aquifer. Costs rise; several sites become undevelopable at any price.",
+      effect: { unlock: "WATER_LIMIT" }
+    },
+    {
+      m: 521,
+      tag: "ECONOMY",
+      head: "A large housing financier fails",
+      body: "May 2038. It had been lending against land at valuations its own auditors queried. The failure freezes construction finance nationally within a fortnight. This is the one that separates the firms with rent rolls from the firms with land banks.",
+      effect: { crash: true }
+    },
+    {
+      m: 535,
+      tag: "ECONOMY",
+      head: "Nothing is registering",
+      body: "June 2039. The sub-registrar offices are open and empty. Prices are not falling because nothing is transacting to fall. Everyone is waiting for somebody else to set the number.",
+      effect: {}
+    },
+    {
+      m: 553,
+      tag: "POLITICS",
+      head: "Hyderabad crosses eighteen million",
+      body: "December 2040. The metropolitan region is now among the ten largest urban areas on earth. Every remaining problem \u2014 water, transport, the Musi, the tanks \u2014 is a problem of that scale, and the political question for the next decade is whether the city can be governed as one thing.",
+      effect: {}
+    },
+    {
+      m: 576,
+      tag: "INFRA",
+      head: "Metro Phase III completes the orbital loop",
+      body: "November 2042. Rail now connects the airport, both ring roads and the western corridor. Land within a kilometre of a station commands a premium that did not exist a decade earlier, and land more than three kilometres from one has quietly stopped keeping up.",
+      effect: { unlock: "METRO_LOOP" }
+    },
+    {
+      m: 612,
+      tag: "ECONOMY",
+      head: "Construction labour is the binding constraint",
+      body: "November 2045. The migration that built this city for fifty years has slowed to nothing \u2014 Bihar and Odisha have their own construction booms and better wages at home. Sites run on machines and a third of the men, and the ones who remain are paid accordingly.",
+      effect: { materialSpike: 1.15 }
+    },
+    {
+      m: 648,
+      tag: "NOTE",
+      head: "Fifty-five years",
+      body: "November 2048. You are seventy-eight. The firm has outlived the state it was founded in, two currencies worth of inflation, four crashes and every competitor that started when you did. Whatever happens in the last two years, the thing you built is no longer a thing you are building.",
+      effect: {}
+    }
+  ];
+  var TRACK_2050 = {
+    banjara: [[2032, 64], [2033, 60], [2035, 68], [2037, 80], [2039, 74], [2041, 82], [2044, 104], [2047, 122], [2050, 145]],
+    jubilee: [[2032, 77], [2033, 72], [2035, 82], [2037, 97], [2039, 89], [2041, 99], [2044, 126], [2047, 148], [2050, 176]],
+    somajiguda: [[2032, 42], [2033, 39], [2035, 45], [2037, 53], [2039, 49], [2041, 54], [2044, 69], [2047, 81], [2050, 96]],
+    begumpet: [[2032, 42], [2033, 39], [2035, 45], [2037, 53], [2039, 49], [2041, 54], [2044, 69], [2047, 81], [2050, 96]],
+    ameerpet: [[2032, 50], [2033, 47], [2035, 53], [2037, 63], [2039, 58], [2041, 64], [2044, 82], [2047, 96], [2050, 114]],
+    secunderabad: [[2032, 40], [2033, 37], [2035, 43], [2037, 50], [2039, 46], [2041, 51], [2044, 65], [2047, 77], [2050, 91]],
+    himayatnagar: [[2032, 48], [2033, 45], [2035, 51], [2037, 60], [2039, 56], [2041, 62], [2044, 79], [2047, 93], [2050, 110]],
+    kukatpally: [[2032, 122], [2033, 113], [2035, 130], [2037, 154], [2039, 142], [2041, 158], [2044, 202], [2047, 238], [2050, 283]],
+    miyapur: [[2032, 258], [2033, 239], [2035, 275], [2037, 326], [2039, 300], [2041, 334], [2044, 428], [2047, 504], [2050, 600]],
+    madhapur: [[2032, 935], [2033, 865], [2035, 990], [2037, 1170], [2039, 1075], [2041, 1195], [2044, 1520], [2047, 1780], [2050, 2100]],
+    kondapur: [[2032, 885], [2033, 818], [2035, 938], [2037, 1110], [2039, 1020], [2041, 1135], [2044, 1450], [2047, 1700], [2050, 2010]],
+    gachibowli: [[2032, 1122], [2033, 1038], [2035, 1190], [2037, 1408], [2039, 1295], [2041, 1440], [2044, 1840], [2047, 2160], [2050, 2560]],
+    nanakramguda: [[2032, 1565], [2033, 1448], [2035, 1660], [2037, 1965], [2039, 1806], [2041, 2010], [2044, 2570], [2047, 3020], [2050, 3580]],
+    kokapet: [[2032, 2140], [2033, 1980], [2035, 2270], [2037, 2690], [2039, 2470], [2041, 2750], [2044, 3520], [2047, 4140], [2050, 4900]],
+    manikonda: [[2032, 1100], [2033, 1018], [2035, 1168], [2037, 1382], [2039, 1270], [2041, 1414], [2044, 1808], [2047, 2125], [2050, 2520]],
+    narsingi: [[2032, 1132], [2033, 1047], [2035, 1202], [2037, 1422], [2039, 1308], [2041, 1455], [2044, 1860], [2047, 2188], [2050, 2595]],
+    uppal: [[2032, 143], [2033, 133], [2035, 153], [2037, 181], [2039, 167], [2041, 186], [2044, 238], [2047, 280], [2050, 333]],
+    lbnagar: [[2032, 132], [2033, 122], [2035, 141], [2037, 167], [2039, 154], [2041, 171], [2044, 219], [2047, 258], [2050, 307]],
+    // The outer belt is where the growth goes once the western corridor is built out.
+    kompally: [[2032, 298], [2033, 278], [2035, 325], [2037, 395], [2039, 368], [2041, 420], [2044, 560], [2047, 680], [2050, 840]],
+    shamshabad: [[2032, 292], [2033, 272], [2035, 320], [2037, 392], [2039, 366], [2041, 420], [2044, 565], [2047, 690], [2050, 855]],
+    pocharam: [[2032, 340], [2033, 317], [2035, 372], [2037, 455], [2039, 424], [2041, 486], [2044, 652], [2047, 795], [2050, 985]],
+    medchal: [[2032, 166], [2033, 155], [2035, 185], [2037, 232], [2039, 218], [2041, 254], [2044, 350], [2047, 435], [2050, 550]]
+  };
+  var LOCALITIES_2030S = [
+    {
+      id: "futurecity",
+      name: "Future City (Srisailam corridor)",
+      zone: "south",
+      base: 40,
+      far: 1.75,
+      airportCap: false,
+      from: 366,
+      tags: ["emerging", "agri"],
+      liquidity: 0.2,
+      prestige: 0.2,
+      desc: "Dry land along the Srisailam highway, south of the Outer Ring Road, inside the boundary the state drew on a map in 2024. Whether that boundary means anything depends on a government that has not been elected yet.",
+      risk: { ASSIGNED_LAND: 0.28, LAYOUT_UNAPPROVED: 0.34, NO_ACCESS: 0.3, GOVT_CLAIM: 0.22 },
+      rentBase: { res: 0.9, office: 15, retail: 4, industrial: 2 },
+      officeUnlock: "FUTURE_LIVE",
+      track: [
+        [1995, 1],
+        [2024, 1],
+        [2026, 2.6],
+        [2028, 5],
+        [2030, 9],
+        [2032, 13],
+        [2033, 12],
+        [2035, 20],
+        [2037, 34],
+        [2039, 31],
+        [2041, 40],
+        [2044, 62],
+        [2047, 84],
+        [2050, 112]
+      ]
+    },
+    {
+      id: "rrrnorth",
+      name: "Toopran / Gajwel (RRR north)",
+      zone: "north",
+      base: 30,
+      far: 1.75,
+      airportCap: false,
+      from: 400,
+      tags: ["agri", "far", "periphery"],
+      liquidity: 0.15,
+      prestige: 0.1,
+      desc: "Farmland on the northern arc of the Regional Ring Road, forty kilometres out. Exactly what Kokapet looked like in 1998, with exactly the same argument attached to it.",
+      risk: { ASSIGNED_LAND: 0.32, LAYOUT_UNAPPROVED: 0.42, NO_ACCESS: 0.34, MISSING_HEIR: 0.22 },
+      rentBase: { res: 0.7, office: null, retail: 3, industrial: 2.2 },
+      track: [
+        [1995, 1],
+        [2029, 1],
+        [2031, 2.2],
+        [2032, 3.4],
+        [2033, 3.1],
+        [2035, 6],
+        [2037, 11],
+        [2039, 10],
+        [2041, 15],
+        [2044, 26],
+        [2047, 40],
+        [2050, 58]
+      ]
+    },
+    {
+      id: "rrreast",
+      name: "Bhongir / Choutuppal (RRR east)",
+      zone: "east",
+      base: 26,
+      far: 1.75,
+      airportCap: false,
+      from: 400,
+      tags: ["agri", "far", "periphery"],
+      liquidity: 0.14,
+      prestige: 0.1,
+      desc: "The eastern arc, on the Warangal side. Cheaper than the north because the north has the pharma city and this has a rock formation and a fort.",
+      risk: { ASSIGNED_LAND: 0.3, LAYOUT_UNAPPROVED: 0.44, NO_ACCESS: 0.36, MISSING_HEIR: 0.2 },
+      rentBase: { res: 0.65, office: null, retail: 2.8, industrial: 2.1 },
+      track: [
+        [1995, 1],
+        [2029, 1],
+        [2031, 2],
+        [2032, 3],
+        [2033, 2.8],
+        [2035, 5.2],
+        [2037, 9],
+        [2039, 8.4],
+        [2041, 12.5],
+        [2044, 21],
+        [2047, 33],
+        [2050, 47]
+      ]
+    }
+  ];
+  var RENT_2050 = {
+    res: [[2033, 13.2], [2035, 14.6], [2037, 16.4], [2039, 17.2], [2041, 18.8], [2044, 22], [2047, 25.5], [2050, 29.5]],
+    office: [[2033, 4.9], [2035, 5.2], [2037, 5.7], [2039, 5.6], [2041, 6], [2044, 6.8], [2047, 7.6], [2050, 8.6]],
+    retail: [[2033, 7.7], [2035, 8.4], [2037, 9.4], [2039, 9.6], [2041, 10.4], [2044, 12.2], [2047, 14.1], [2050, 16.3]],
+    industrial: [[2033, 8.4], [2035, 9.4], [2037, 10.8], [2039, 11.4], [2041, 12.6], [2044, 15], [2047, 17.6], [2050, 20.6]]
+  };
+  var COST_2050 = [
+    [2033, 8.7],
+    [2035, 9.4],
+    [2037, 10.3],
+    [2039, 11],
+    [2041, 11.8],
+    [2044, 13.3],
+    [2047, 15],
+    [2050, 17]
+  ];
+  var WAGE_2050 = [
+    [2033, 14.2],
+    [2035, 15.6],
+    [2037, 17.3],
+    [2039, 18.6],
+    [2041, 20.2],
+    [2044, 23.5],
+    [2047, 27.5],
+    [2050, 32]
+  ];
+  var SALARY_2050 = [
+    [2033, 24.8],
+    [2035, 27.5],
+    [2037, 30.8],
+    [2039, 33.2],
+    [2041, 36.4],
+    [2044, 42.5],
+    [2047, 49.5],
+    [2050, 58]
+  ];
+  var CAP_2050 = [
+    [2033, 0.082],
+    [2035, 0.078],
+    [2037, 0.074],
+    [2039, 0.086],
+    [2041, 0.08],
+    [2044, 0.074],
+    [2047, 0.072],
+    [2050, 0.07]
+  ];
+  var MATERIAL_2050 = {
+    cement: [[2033, 5], [2037, 5.8], [2041, 6.6], [2045, 7.6], [2050, 9]],
+    steel: [[2033, 4.7], [2037, 5.4], [2041, 6], [2045, 7], [2050, 8.2]],
+    sand: [[2033, 14.2], [2037, 16.8], [2041, 19.5], [2045, 23], [2050, 28]],
+    brick: [[2033, 9.2], [2037, 10.8], [2041, 12.4], [2045, 14.5], [2050, 17.5]]
+  };
+  var FAR_HORIZON = (2050 - 1995) * 12 + 11;
 
   // src/data/geo.js
   var A = (pairs) => pairs.map(([year, v]) => ({ year, v }));
@@ -906,6 +1215,11 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   for (const loc of LOCALITIES) {
     const ext2 = TRACK_2020S[loc.id];
     if (ext2) loc.track = loc.track.concat(ext2.map(([year, v]) => ({ year, v })));
+    const far = TRACK_2050[loc.id];
+    if (far) loc.track = loc.track.concat(far.map(([year, v]) => ({ year, v })));
+  }
+  for (const loc of LOCALITIES_2030S) {
+    LOCALITIES.push({ ...loc, track: loc.track.map(([year, v]) => ({ year, v })) });
   }
   var BY_ID = Object.fromEntries(LOCALITIES.map((l) => [l.id, l]));
   var RENT_TRACK = {
@@ -915,6 +1229,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     industrial: A([[1995, 1], [2e3, 1.2], [2005, 1.5], [2008, 1.8], [2010, 2.2], [2013, 2.6], [2015, 3], [2017, 3.4], [2019, 4], [2020, 4.2]])
   };
   for (const [use, ext2] of Object.entries(RENT_2020S)) {
+    RENT_TRACK[use] = RENT_TRACK[use].concat(ext2.map(([year, v]) => ({ year, v })));
+  }
+  for (const [use, ext2] of Object.entries(RENT_2050)) {
     RENT_TRACK[use] = RENT_TRACK[use].concat(ext2.map(([year, v]) => ({ year, v })));
   }
   var DEFECTS = {
@@ -1025,6 +1342,10 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   function initialIntel() {
     const intel = {};
     for (const l of LOCALITIES) {
+      if (l.from) {
+        intel[l.id] = { level: INTEL_NONE, fresh: 0 };
+        continue;
+      }
       if (l.id === "kukatpally" || l.id === "miyapur") intel[l.id] = { level: INTEL_KNOWN, fresh: 999 };
       else if (l.zone === "core") intel[l.id] = { level: INTEL_KNOWN, fresh: 999 };
       else if (["uppal", "lbnagar", "kompally"].includes(l.id)) intel[l.id] = { level: INTEL_HEARSAY, fresh: 999 };
@@ -1838,6 +2159,10 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   DUTY_TRACK.push(...ext(DUTY_2020S));
   FAR_TRACK.push(...ext(FAR_2020S));
   for (const [key, e] of Object.entries(MATERIAL_2020S)) MATERIALS[key].track.push(...ext(e));
+  COST_TRACK.push(...ext(COST_2050));
+  WAGE_TRACK.push(...ext(WAGE_2050));
+  SALARY_TRACK.push(...ext(SALARY_2050));
+  for (const [key, e] of Object.entries(MATERIAL_2050)) MATERIALS[key].track.push(...ext(e));
 
   // src/data/history.js
   var MACRO = {
@@ -1870,7 +2195,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     2020: { cpi: 6.2, gdp: -6.6, plr: 10, usd: 74.1, credit: 0.4, demand: 0.6 },
     // The 2020s are appended so a player who chooses to carry on past March 2020 has real
     // ground to walk on. Everything above this line is the historical record.
-    ...MACRO_2020S
+    ...MACRO_2020S,
+    // 2031 onward is invented outright. See history2050.js.
+    ...MACRO_2050
   };
   var LAST_YEAR = Math.max(...Object.keys(MACRO).map(Number));
   var SHOCKS = {
@@ -1904,7 +2231,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     285: { credit: 0.26 },
     // IL&FS default
     302: { demand: 0.35, credit: 0.3 },
-    ...SHOCKS_2020S
+    ...SHOCKS_2020S,
+    ...SHOCKS_2050
   };
   var TIMELINE = [
     {
@@ -2188,7 +2516,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
       effect: { end: true }
     }
   ];
-  var TIMELINE_FULL = [...TIMELINE, ...TIMELINE_2020S];
+  var TIMELINE_FULL = [...TIMELINE, ...TIMELINE_2020S, ...TIMELINE_2050];
   var REGIMES = {
     ntr: { key: "ntr", name: "N. T. Rama Rao (TDP)", approvalSpeed: 0.85, pressure: 0.5, focus: "Welfare and prohibition" },
     naidu: { key: "naidu", name: "N. Chandrababu Naidu (TDP)", approvalSpeed: 1, pressure: 0.6, focus: "Urban infrastructure and IT" },
@@ -3861,7 +4189,8 @@ A proper refurbishment is about ${money(cost)}.`,
       { year: 2013, v: 0.105 },
       { year: 2016, v: 0.09 },
       { year: 2020, v: 0.078 },
-      ...CAP_2020S.map(([year, v]) => ({ year, v }))
+      ...CAP_2020S.map(([year, v]) => ({ year, v })),
+      ...CAP_2050.map(([year, v]) => ({ year, v }))
     ], m);
     const useAdj = { office: 0, retail: 5e-3, res: 0.02, industrial: 0.012 }[use] || 0;
     const cyc = (1 - macro.demand) * 0.02;
@@ -3877,8 +4206,11 @@ A proper refurbishment is about ${money(cost)}.`,
   function taxRate(kind, m) {
     return anchorAt(TAX_TRACK[kind], m);
   }
+  function localitiesAt(m) {
+    return LOCALITIES.filter((l) => (l.from ?? 0) <= m);
+  }
   function marketView(m, s) {
-    return LOCALITIES.map((loc) => {
+    return localitiesAt(m).map((loc) => {
       const rate = landRate(loc.id, m, s);
       const prev = m >= 12 ? landRate(loc.id, m - 12, s) : rate;
       const level = intelLevel(s, loc.id);
@@ -3918,7 +4250,7 @@ A proper refurbishment is about ${money(cost)}.`,
     return out;
   }
   function makeLandOffer(m, s, rng, opts = {}) {
-    const pool = opts.locality ? [BY_ID[opts.locality]] : LOCALITIES.filter((l) => {
+    const pool = opts.locality ? [BY_ID[opts.locality]] : localitiesAt(m).filter((l) => {
       if (opts.zone && l.zone !== opts.zone) return false;
       if (l.tags.includes("far") && s.skills.realestate < 60 && rng.chance(0.6)) return false;
       return true;
@@ -3969,7 +4301,7 @@ A proper refurbishment is about ${money(cost)}.`,
     };
   }
   function makeDevAgreement(m, s, rng) {
-    const pool = LOCALITIES.filter((l) => ["core", "northwest", "east"].includes(l.zone));
+    const pool = localitiesAt(m).filter((l) => ["core", "northwest", "east"].includes(l.zone));
     const loc = rng.pick(pool);
     const areaSqYd = Math.round(rng.range(400, 2200) / 10) * 10;
     const ownerShare = rng.range(0.32, 0.48);
@@ -3995,7 +4327,7 @@ A proper refurbishment is about ${money(cost)}.`,
     };
   }
   function makeAssetOffer(m, s, rng) {
-    const pool = LOCALITIES.filter((l) => l.rentBase.office || l.rentBase.retail);
+    const pool = localitiesAt(m).filter((l) => l.rentBase.office || l.rentBase.retail);
     const loc = rng.pick(pool);
     const use = rng.weighted([["office", 3], ["retail", 2], ["res", 1], ["industrial", 2]]);
     const rate = rentRate(loc.id, use, m, s.flags);
@@ -5251,19 +5583,26 @@ A proper refurbishment is about ${money(cost)}.`,
     return { ok: true, decision: d };
   }
   function continuePast2020(s) {
-    if (s.extended) return { ok: false, msg: "Already running into the 2020s." };
+    const next = nextHorizon(s);
+    if (!next) return { ok: false, msg: "December 2050. There is no more road." };
+    s.horizonYear = next.year;
     s.extended = true;
     s.over = false;
     s.overReason = null;
     s.insolventMonths = 0;
-    s.news.push({
+    s.news.push(next.year === 2030 ? {
       m: s.month,
       tag: "NOTE",
       head: "The story continues",
       body: "April 2020. The lockdown is three weeks old, every site in the country is silent and nobody knows how long it lasts. From here to the end of 2025 the world follows what actually happened \u2014 the collapse, the cheapest home loans in Indian history, the boom that followed them, a change of government in Telangana and the demolitions that came with it. Beyond 2025 the numbers are a reasoned extrapolation and nothing more. You have until December 2030."
+    } : {
+      m: s.month,
+      tag: "NOTE",
+      head: "Twenty more years, and none of them real",
+      body: "From here to December 2050 there is no record to be faithful to, so this is invention: a property market that behaves the way property markets behave. There are two serious downturns ahead \u2014 a cooling as the 2020s unwind, and a credit-driven correction of the kind that arrives about once a generation. Land does not go up every year and never has. A second ring road opens, the frontier moves out past it, and the western corridor stops being where the growth is. Treat none of it as a forecast."
     });
     refresh(s);
-    return { ok: true };
+    return { ok: true, horizon: next };
   }
   function repayLoan(s, loanId, amount) {
     const loan = s.loans.find((l) => l.id === loanId);
@@ -6401,7 +6740,7 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
   }
 
   // src/ui/app.js
-  var BUILD_ID = "f092db04ca".startsWith("__") ? "source" : "f092db04ca";
+  var BUILD_ID = "b53dafea73".startsWith("__") ? "source" : "b53dafea73";
   var $ = (sel, root = document) => root.querySelector(sel);
   var app = $("#app");
   var modalRoot = $("#modal-root");
@@ -7746,11 +8085,12 @@ Not every introduction closes. Yours close more often the better you know the ma
     const nwUsd = S.netWorth / S.macro.usd;
     const reasons = {
       time: "March 2020. Twenty-five years and three months.",
-      extendedTime: "December 2030. Thirty-six years.",
+      extendedTime: `${dateLabel(S.month)}. ${Math.floor(S.month / 12)} years.`,
       insolvent: "The company failed.",
       health: "Your body stopped before the company did."
     };
-    const canContinue = S.overReason === "time" && !S.extended;
+    const onward = S.overReason === "time" || S.overReason === "extendedTime" ? nextHorizon(S) : null;
+    const canContinue = !!onward;
     const verdict = () => {
       if (S.overReason === "insolvent") return "You are one of the many. Most people who tried this in Hyderabad between 1995 and 2020 ended here, and most of them were not stupid \u2014 they were leveraged into a cycle that turned.";
       if (nwUsd > 1e11) return "One hundred billion dollars. This should not have been possible, and the fact that you did it means either extraordinary judgement or a run of luck the market will not give twice.";
@@ -7788,14 +8128,17 @@ Not every introduction closes. Yours close more often the better you know the ma
     ${canContinue ? `<div class="body" style="padding-top:0">
       <div class="card tight" style="border-left:3px solid var(--accent)">
         <b>You do not have to stop here.</b>
-        <p class="small" style="margin:8px 0 0">The simulation ends in March 2020 because that is where the world it models ends.
-        But the company is still standing, and you can carry it into the 2020s: the lockdown, the cheapest home loans in Indian
-        history and the boom that followed them, a change of government in Telangana, and the demolitions that came after.
-        Real ground to the end of 2025, a reasoned extrapolation after that, and five more years to run.</p>
+        ${onward.year === 2030 ? `<p class="small" style="margin:8px 0 0">The simulation ends in March 2020 because that is where the world it
+        models ends. But the company is still standing, and you can carry it into the 2020s: the lockdown, the cheapest home loans in
+        Indian history and the boom that followed them, a change of government in Telangana, and the demolitions that came after.
+        Real ground to the end of 2025, a reasoned extrapolation after that, and five more years to run.</p>` : `<p class="small" style="margin:8px 0 0">Another twenty years, to December 2050, and none of it real. There is no record left to be
+        faithful to, so what follows is a property market that behaves the way property markets behave: two serious downturns, a second
+        ring road, and a frontier that moves out past it while the western corridor stops being where the growth is.
+        Land does not go up every year. Treat none of it as a forecast.</p>`}
       </div>
     </div>` : ""}
     <div class="foot"><div class="inline">
-      ${canContinue ? '<button class="btn" id="carryon">Carry on into the 2020s</button>' : ""}
+      ${canContinue ? `<button class="btn" id="carryon">Carry on to ${esc(onward.label)}</button>` : ""}
       <button class="btn ghost" id="close">Look through the books</button>
       <button class="btn ${canContinue ? "ghost" : ""}" id="again">Start again</button>
     </div></div>
@@ -7805,7 +8148,7 @@ Not every introduction closes. Yours close more often the better you know the ma
         continuePast2020(S);
         saveGame(S);
         closeModal();
-        say("April 2020. Sites are silent and nobody knows for how long. You have until December 2030.");
+        say(`The clock runs again. You have until ${onward.label}.`);
         tab = "dashboard";
         render();
       };

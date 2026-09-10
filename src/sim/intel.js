@@ -25,6 +25,7 @@ export const INTEL_KNOWN = 2;
 export function initialIntel() {
   const intel = {};
   for (const l of LOCALITIES) {
+    if (l.from) { intel[l.id] = { level: INTEL_NONE, fresh: 0 }; continue; }
     if (l.id === 'kukatpally' || l.id === 'miyapur') intel[l.id] = { level: INTEL_KNOWN, fresh: 999 };
     else if (l.zone === 'core') intel[l.id] = { level: INTEL_KNOWN, fresh: 999 };
     else if (['uppal', 'lbnagar', 'kompally'].includes(l.id)) intel[l.id] = { level: INTEL_HEARSAY, fresh: 999 };

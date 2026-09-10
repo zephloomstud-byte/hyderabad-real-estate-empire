@@ -6,6 +6,7 @@
 const A = (pairs) => pairs.map(([year, v]) => ({ year, v }));
 
 import { COST_2020S, WAGE_2020S, SALARY_2020S, DUTY_2020S, FAR_2020S, MATERIAL_2020S } from './history2020s.js';
+import { COST_2050, WAGE_2050, SALARY_2050, MATERIAL_2050 } from './history2050.js';
 
 /**
  * All-in cost of construction, rupees per square foot of built-up area, January 1995.
@@ -223,3 +224,7 @@ SALARY_TRACK.push(...ext(SALARY_2020S));
 DUTY_TRACK.push(...ext(DUTY_2020S));
 FAR_TRACK.push(...ext(FAR_2020S));
 for (const [key, e] of Object.entries(MATERIAL_2020S)) MATERIALS[key].track.push(...ext(e));
+COST_TRACK.push(...ext(COST_2050));
+WAGE_TRACK.push(...ext(WAGE_2050));
+SALARY_TRACK.push(...ext(SALARY_2050));
+for (const [key, e] of Object.entries(MATERIAL_2050)) MATERIALS[key].track.push(...ext(e));
