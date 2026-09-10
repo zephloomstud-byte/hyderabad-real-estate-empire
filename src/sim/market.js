@@ -8,6 +8,7 @@ import { COST_TRACK, DUTY_TRACK, FAR_TRACK, FAR_AIRPORT, MATERIALS, WAGES, WAGE_
   SALARY_TRACK, BUILD_TYPES, LAYOUT_TYPES, TAX_TRACK } from '../data/costs.js';
 import { FIRST_NAMES, SURNAMES, nextId } from './state.js';
 import { intelLevel, fuzzRate, surveyCost, INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN } from './intel.js';
+import { CAP_2020S, UNAPPROVED_2020S } from '../data/history2020s.js';
 
 /** Blend the annual macro series into a monthly reading, applying month-keyed shocks. */
 export function macroAt(m) {
@@ -138,6 +139,7 @@ export function capRate(use, m, s) {
     { year: 1995, v: 0.135 }, { year: 2000, v: 0.125 }, { year: 2004, v: 0.115 },
     { year: 2007, v: 0.095 }, { year: 2009, v: 0.115 }, { year: 2013, v: 0.105 },
     { year: 2016, v: 0.090 }, { year: 2020, v: 0.078 },
+    ...CAP_2020S.map(([year, v]) => ({ year, v })),
   ], m);
   const useAdj = { office: 0, retail: 0.005, res: 0.02, industrial: 0.012 }[use] || 0;
   const cyc = (1 - macro.demand) * 0.02;
@@ -344,11 +346,13 @@ const UNAPPROVED_PRICE = [
   { year: 1995, v: 0.78 }, { year: 2000, v: 0.74 }, { year: 2003, v: 0.68 },
   { year: 2007, v: 0.58 }, { year: 2010, v: 0.52 }, { year: 2015, v: 0.46 },
   { year: 2020, v: 0.42 },
+  ...UNAPPROVED_2020S.price.map(([year, v]) => ({ year, v })),
 ];
 const UNAPPROVED_ABSORPTION = [
   { year: 1995, v: 0.90 }, { year: 2000, v: 0.85 }, { year: 2003, v: 0.78 },
   { year: 2007, v: 0.68 }, { year: 2010, v: 0.60 }, { year: 2015, v: 0.52 },
   { year: 2020, v: 0.46 },
+  ...UNAPPROVED_2020S.absorption.map(([year, v]) => ({ year, v })),
 ];
 
 export function unapprovedPenalty(m) {

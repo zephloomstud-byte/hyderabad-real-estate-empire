@@ -50,7 +50,11 @@ export const num = (v, n = 0) => indianGroup(round(v, n));
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const START_YEAR = 1995;
-export const END_MONTH = (2020 - START_YEAR) * 12 + 2; // March 2020
+export const END_MONTH = (2020 - START_YEAR) * 12 + 2;          // March 2020
+export const EXTENDED_END_MONTH = (2030 - START_YEAR) * 12 + 11; // December 2030
+
+/** The last playable month for this particular run. */
+export const horizonOf = (s) => (s && s.extended ? EXTENDED_END_MONTH : END_MONTH);
 
 export const yearOf = (m) => START_YEAR + Math.floor(m / 12);
 export const monthOf = (m) => m % 12;

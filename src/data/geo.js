@@ -196,6 +196,15 @@ export const LOCALITIES = [
   },
 ];
 
+import { TRACK_2020S, RENT_2020S, UNAPPROVED_2020S } from './history2020s.js';
+
+// Extend every track into the 2020s. Done here rather than inline above so the
+// historical record and its continuation stay visibly separate.
+for (const loc of LOCALITIES) {
+  const ext = TRACK_2020S[loc.id];
+  if (ext) loc.track = loc.track.concat(ext.map(([year, v]) => ({ year, v })));
+}
+
 export const BY_ID = Object.fromEntries(LOCALITIES.map((l) => [l.id, l]));
 
 // Global rent multiplier tracks by use. Rents rise far more slowly than land does.
@@ -211,6 +220,10 @@ export const RENT_TRACK = {
 
 // Title defect catalogue. Severity 0-1; `fatal` means the parcel can never be
 // legally developed or sold and the money is simply gone.
+for (const [use, ext] of Object.entries(RENT_2020S)) {
+  RENT_TRACK[use] = RENT_TRACK[use].concat(ext.map(([year, v]) => ({ year, v })));
+}
+
 export const DEFECTS = {
   ASSIGNED_LAND: {
     name: 'Assigned land (POT Act 1977)', severity: 1.0, fatal: true, ddDifficulty: 0.45,

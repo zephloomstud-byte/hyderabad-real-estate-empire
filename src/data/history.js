@@ -3,6 +3,8 @@
 // simulation rather than decorate it: interest rates, inflation, credit availability and
 // the Hyderabad demand cycle all originate here.
 
+import { MACRO_2020S, SHOCKS_2020S, TIMELINE_2020S } from './history2020s.js';
+
 export const MACRO = {
   //          cpi%   gdp%   plr%   usdinr  credit  hydDemand
   1995: { cpi: 10.2, gdp: 7.6, plr: 16.5, usd: 32.4, credit: 0.42, demand: 0.80 },
@@ -31,7 +33,13 @@ export const MACRO = {
   2018: { cpi: 3.4, gdp: 6.8, plr: 11.5, usd: 68.4, credit: 0.46, demand: 1.45 },
   2019: { cpi: 4.8, gdp: 4.2, plr: 11.0, usd: 70.4, credit: 0.34, demand: 1.40 },
   2020: { cpi: 6.2, gdp: -6.6, plr: 10.0, usd: 74.1, credit: 0.40, demand: 0.60 },
+  // The 2020s are appended so a player who chooses to carry on past March 2020 has real
+  // ground to walk on. Everything above this line is the historical record.
+  ...MACRO_2020S,
 };
+
+/** The last year for which the series is defined. */
+export const LAST_YEAR = Math.max(...Object.keys(MACRO).map(Number));
 
 // Month-keyed overrides for sharp shocks an annual average would smear away.
 // Key = absolute month index (0 = January 1995).
@@ -51,6 +59,7 @@ export const SHOCKS = {
   270: { demand: 0.90 },                                               // GST transition quarter
   284: { credit: 0.28 }, 285: { credit: 0.26 },                        // IL&FS default
   302: { demand: 0.35, credit: 0.30 },
+  ...SHOCKS_2020S,
 };
 
 // The chronicle. These arrive as news and, where flagged, change the world.
@@ -258,15 +267,19 @@ export const TIMELINE = [
 ];
 
 // Governing regimes: how approvals behave and where the pressure comes from.
+export const TIMELINE_FULL = [...TIMELINE, ...TIMELINE_2020S];
+
 export const REGIMES = {
   ntr: { key: 'ntr', name: 'N. T. Rama Rao (TDP)', approvalSpeed: 0.85, pressure: 0.50, focus: 'Welfare and prohibition' },
   naidu: { key: 'naidu', name: 'N. Chandrababu Naidu (TDP)', approvalSpeed: 1.00, pressure: 0.60, focus: 'Urban infrastructure and IT' },
   ysr: { key: 'ysr', name: 'Y. S. Rajasekhara Reddy (INC)', approvalSpeed: 0.90, pressure: 0.80, focus: 'Irrigation and rural welfare' },
   drift: { key: 'drift', name: 'Congress (post-YSR drift)', approvalSpeed: 0.55, pressure: 0.85, focus: 'Paralysis' },
   kcr: { key: 'kcr', name: 'K. Chandrashekar Rao (TRS)', approvalSpeed: 1.25, pressure: 0.70, focus: 'Hyderabad growth and western corridor' },
+  revanth: { key: 'revanth', name: 'A. Revanth Reddy (INC)', approvalSpeed: 0.95, pressure: 0.75, focus: 'Review, regularisation and the Musi' },
 };
 
 export function regimeAt(m) {
+  if (m >= 347) return REGIMES.revanth;
   if (m >= 233) return REGIMES.kcr;
   if (m >= 176) return REGIMES.drift;
   if (m >= 112) return REGIMES.ysr;
@@ -278,6 +291,6 @@ export function regimeAt(m) {
 export const CPI_INDEX = (() => {
   const idx = {};
   let v = 100;
-  for (let y = 1995; y <= 2020; y++) { idx[y] = v; v *= 1 + MACRO[y].cpi / 100; }
+  for (let y = 1995; y <= LAST_YEAR; y++) { idx[y] = v; v *= 1 + MACRO[y].cpi / 100; }
   return idx;
 })();

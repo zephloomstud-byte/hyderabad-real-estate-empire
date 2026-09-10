@@ -3,8 +3,8 @@
 // events are allowed to touch, which keeps all bookkeeping in one auditable place.
 
 import { makeRng } from '../core/rng.js';
-import { clamp, dateLabel, yearOf, money, END_MONTH, SQYD_PER_ACRE } from '../core/util.js';
-import { TIMELINE, regimeAt } from '../data/history.js';
+import { clamp, dateLabel, yearOf, money, END_MONTH, EXTENDED_END_MONTH, horizonOf, SQYD_PER_ACRE } from '../core/util.js';
+import { TIMELINE_FULL as TIMELINE, regimeAt } from '../data/history.js';
 import { BY_ID, DEFECTS } from '../data/geo.js';
 import { BUILD_TYPES, LAYOUT_TYPES, ROLES, LENDERS } from '../data/costs.js';
 import { EVENTS } from '../data/events.js';
@@ -417,6 +417,31 @@ export function applyForLoan(s, lenderId, amount, collateralIds) {
  * available use of surplus money — but it is also the money you will not have when
  * the next site needs paying for, and banks do not lend it back on demand.
  */
+/**
+ * Carry on past March 2020.
+ *
+ * The base game stops where the brief said it should, at the point the pandemic begins to
+ * change the economy. A player who has built something and wants to keep going gets to:
+ * the 2020s are on real ground to the end of 2025 and a reasoned extrapolation after that,
+ * and the interface says which is which rather than pretending otherwise.
+ */
+export function continuePast2020(s) {
+  if (s.extended) return { ok: false, msg: 'Already running into the 2020s.' };
+  s.extended = true;
+  s.over = false;
+  s.overReason = null;
+  s.insolventMonths = 0;
+  s.news.push({
+    m: s.month, tag: 'NOTE', head: 'The story continues',
+    body: 'April 2020. The lockdown is three weeks old, every site in the country is silent and nobody knows how long it lasts. '
+      + 'From here to the end of 2025 the world follows what actually happened — the collapse, the cheapest home loans in Indian history, '
+      + 'the boom that followed them, a change of government in Telangana and the demolitions that came with it. '
+      + 'Beyond 2025 the numbers are a reasoned extrapolation and nothing more. You have until December 2030.',
+  });
+  refresh(s);
+  return { ok: true };
+}
+
 export function repayLoan(s, loanId, amount) {
   const loan = s.loans.find((l) => l.id === loanId);
   if (!loan) return { ok: false, msg: 'That facility is already closed.' };
@@ -1269,9 +1294,9 @@ export function advanceMonth(s) {
 }
 
 function checkEnd(s) {
-  if (s.month >= END_MONTH) {
+  if (s.month >= horizonOf(s)) {
     s.over = true;
-    s.overReason = 'time';
+    s.overReason = s.extended ? 'extendedTime' : 'time';
     return;
   }
   if ((s.creditorMonths || 0) >= 6 && s.netWorth < 0) {
@@ -1305,6 +1330,7 @@ function checkEnd(s) {
 // ------------------------------------------------------------------ re-exports for UI
 
 export {
+  END_MONTH, EXTENDED_END_MONTH, horizonOf,
   findDuplicateIds, repairDuplicateIds, reseedIds,
   abandonProject, remainingCommitments, fundingSchedule, freeSqYd, landConsumedBy,
   estimateLayout, isLayout, plotPrice, plotAbsorption, lrdAvailable,

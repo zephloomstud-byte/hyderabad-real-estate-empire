@@ -5,6 +5,8 @@
 
 const A = (pairs) => pairs.map(([year, v]) => ({ year, v }));
 
+import { COST_2020S, WAGE_2020S, SALARY_2020S, DUTY_2020S, FAR_2020S, MATERIAL_2020S } from './history2020s.js';
+
 /**
  * All-in cost of construction, rupees per square foot of built-up area, January 1995.
  * "All-in" the way the trade quotes it: structure, finishes, services, design fees,
@@ -211,3 +213,13 @@ export const LAYOUT_TYPES = {
 
 /** Statutory cost of taking land out of agricultural use, per square yard. */
 export const CONVERSION_COST_PER_SQYD = 9;
+
+// ---------------------------------------------------------------- the 2020s
+// Appended so a player carrying on past March 2020 has real numbers underneath them.
+const ext = (arr) => arr.map(([year, v]) => ({ year, v }));
+COST_TRACK.push(...ext(COST_2020S));
+WAGE_TRACK.push(...ext(WAGE_2020S));
+SALARY_TRACK.push(...ext(SALARY_2020S));
+DUTY_TRACK.push(...ext(DUTY_2020S));
+FAR_TRACK.push(...ext(FAR_2020S));
+for (const [key, e] of Object.entries(MATERIAL_2020S)) MATERIALS[key].track.push(...ext(e));
