@@ -45,5 +45,14 @@ check('refresh repairs a corrupted save on load', findDuplicateIds(loaded), []);
 check('the acreage is addressable again',
   loaded.parcels.find((p) => p.id === loaded.parcels.find((x) => x.label === 'acreage').id).label, 'acreage');
 
+
+// A save stamped as repaired by the broken build must still get repaired.
+const stamped = { seq: { PL: 1 }, idsRepaired: true,
+  parcels: [{ id: 'PL1', label: 'built out' }, { id: 'PL1', label: 'four acres' }],
+  projects: [], assets: [], loans: [], staff: [], offers: [], jvs: [], news: [], month: 0 };
+const g2 = startGame('stamped', { cash: 1e6 });
+Object.assign(g2, { parcels: stamped.parcels, seq: stamped.seq, idsRepaired: true });
+refresh(g2);
+check('a save falsely stamped as repaired is still repaired', findDuplicateIds(g2), []);
 console.log(failed ? `\n${failed} test(s) failed.` : '\nAll identifier tests pass.');
 process.exit(failed ? 1 : 0);

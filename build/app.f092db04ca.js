@@ -4634,7 +4634,7 @@ A proper refurbishment is about ${money(cost)}.`,
   }
   function refresh(s) {
     if (!s.intel) s.intel = initialIntel();
-    if (!s.idsRepaired) {
+    if (!s.seq || findDuplicateIds(s).length) {
       reseedIds(s);
       const repaired = repairDuplicateIds(s);
       s.idsRepaired = true;
@@ -6131,7 +6131,7 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
   }
 
   // src/ui/app.js
-  var BUILD_ID = "2263be2150".startsWith("__") ? "source" : "2263be2150";
+  var BUILD_ID = "f092db04ca".startsWith("__") ? "source" : "f092db04ca";
   var $ = (sel, root = document) => root.querySelector(sel);
   var app = $("#app");
   var modalRoot = $("#modal-root");

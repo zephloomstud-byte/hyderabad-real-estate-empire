@@ -56,7 +56,11 @@ export function refresh(s) {
   // Saves written before ids were persisted carry colliding identifiers. Lift the
   // sequences above whatever is already in use so nothing new can collide, and say so
   // if the damage was already done.
-  if (!s.idsRepaired) {
+  // Check for the damage rather than trusting a marker. An earlier build stamped saves
+  // as repaired while its repair silently did nothing, so any save carrying that stamp
+  // would have been skipped forever by the version that actually worked. Detecting
+  // duplicates directly is cheap, idempotent, and cannot be defeated by a stale flag.
+  if (!s.seq || findDuplicateIds(s).length) {
     reseedIds(s);
     const repaired = repairDuplicateIds(s);
     s.idsRepaired = true;
