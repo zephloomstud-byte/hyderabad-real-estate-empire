@@ -9,6 +9,7 @@ import { BY_ID, DEFECTS } from '../data/geo.js';
 import { BUILD_TYPES, LAYOUT_TYPES, ROLES, LENDERS } from '../data/costs.js';
 import { EVENTS } from '../data/events.js';
 import { COMPETITORS, FIRST_NAMES, SURNAMES, newGame } from './state.js';
+import { LOCALITIES } from '../data/geo.js';
 import {
   macroAt, landRate, rentRate, salePrice, capRate, costIndex, dutyRate, salaryIndex,
   makeLandOffer, makeDevAgreement, makeAssetOffer, runDueDiligence, marketView, farFor,
@@ -200,6 +201,79 @@ export function negotiate(s, offer, offerPrice) {
  * It is also not free: deals fall through, and a broker who cannot close stops being
  * called. Every month spent broking is a month not spent building.
  */
+/**
+ * Put the word out. A broker with three years in the trade does not wait to be shown
+ * things; he tells people what he is looking for and they bring it to him. Each brief
+ * costs a retainer and produces two or three parcels of roughly the right shape.
+ *
+ * Without this the deal desk was pure luck: three quarters of what it offered was under
+ * half an acre, so a player who wanted to lay out plots could go years without being
+ * shown land big enough to do it on.
+ */
+export const BRIEFS = {
+  acreage: {
+    label: 'Acreage for a layout',
+    hint: 'Farmland and large holdings on the periphery, big enough to lay out and sell as plots.',
+    fee: 6000, count: 3,
+  },
+  plot: {
+    label: 'A plot to build on',
+    hint: 'Serviced plots in developed localities, the size a building actually goes on.',
+    fee: 4000, count: 3,
+  },
+  cheap: {
+    label: 'Anything distressed',
+    hint: 'Somebody who needs to sell this month. Cheap, and cheap for a reason.',
+    fee: 5000, count: 3,
+  },
+};
+
+export function askBrokers(s, briefKey) {
+  const brief = BRIEFS[briefKey];
+  if (!brief) return { ok: false, msg: 'No such brief.' };
+  const fee = Math.round(brief.fee * costIndex(s.month));
+  if (s.cash < fee) return { ok: false, msg: `The retainer is ${money(fee)} and you cannot spare it.` };
+
+  pay(s, fee);
+  const rng = getRng(s);
+  const found = [];
+  for (let i = 0; i < brief.count; i++) {
+    let o = null;
+    if (briefKey === 'acreage') {
+      // Bias hard toward land that can actually take a layout.
+      const agri = LOCALITIES.filter((l) => l.tags.includes('agri') || l.tags.includes('far') || l.tags.includes('periphery'));
+      const loc = rng.pick(agri.length ? agri : LOCALITIES);
+      o = makeLandOffer(s.month, s, rng, { locality: loc.id, big: true });
+      // Guarantee it clears the smallest layout, or the brief has failed its own purpose.
+      if (o.areaSqYd < SQYD_PER_ACRE * 0.6) {
+        o.areaSqYd = Math.round(SQYD_PER_ACRE * rng.range(0.7, 5));
+        o.price = o.askRate * o.areaSqYd;
+        o.floor = Math.round(o.price * 0.86);
+        o.label = `${(o.areaSqYd / SQYD_PER_ACRE).toFixed(2)} acres at ${o.localityName}`;
+      }
+    } else if (briefKey === 'cheap') {
+      o = makeLandOffer(s.month, s, rng, { distress: true });
+    } else {
+      const built = LOCALITIES.filter((l) => ['core', 'northwest', 'east'].includes(l.zone));
+      o = makeLandOffer(s.month, s, rng, { locality: rng.pick(built).id });
+    }
+    if (!o) continue;
+    o.brief = briefKey;
+    o.expiresAt = s.month + rng.int(2, 5);
+    s.offers.push(o);
+    found.push(o.label);
+  }
+  saveRng(s, rng);
+  s.relations.landowners = clamp(s.relations.landowners + 1, 0, 100);
+  s.ledger.push({ m: s.month, type: 'Broker retainer', amount: -fee, note: brief.label });
+  s.news.push({
+    m: s.month, tag: 'DEAL', head: `Put the word out: ${brief.label.toLowerCase()}`,
+    body: `${money(fee)} between three brokers. Within a fortnight they came back with ${found.length === 1 ? 'one thing' : found.length + ' things'}: ${found.join('; ')}. `
+      + `Telling people what you want is most of this trade.`,
+  });
+  return { ok: true, found, fee };
+}
+
 export function brokerDeal(s, offerId) {
   const offer = s.offers.find((o) => o.id === offerId);
   if (!offer) return { ok: false, msg: 'That offer is gone.' };

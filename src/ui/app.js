@@ -15,7 +15,7 @@ import {
   abandonProject, remainingCommitments, freeSqYd,
   repayLoan, quotePrepayment, remainingTenure, interestIfHeld, brokerDeal, startGame,
   estimateLayout, isLayout, plotPrice,
-  applyForRegularisation, regularisationQuote, lrsWindow,
+  applyForRegularisation, regularisationQuote, lrsWindow, askBrokers, BRIEFS,
   quoteLRD, takeLRD, lrdAvailable,
   commissionSurvey, intelLevel, surveyCost, INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN,
 } from '../sim/engine.js';
@@ -267,6 +267,19 @@ views.dashboard = () => {
 views.deals = () => {
   if (!S.offers.length) return emptyCard('No live opportunities this month. Advance the calendar — brokers will bring you something.');
   return `<div class="stack">
+    <div class="card"><h3>Put the word out</h3>
+      <div class="grid g3">${Object.entries(BRIEFS).map(([k, b]) => {
+        const fee = Math.round(b.fee * costIndex(S.month));
+        return `<div class="card tight">
+          <div class="spread"><b>${esc(b.label)}</b><span class="pill">${money(fee)}</span></div>
+          <div class="small muted" style="margin:6px 0">${esc(b.hint)}</div>
+          <button class="btn sm" data-brief="${k}" ${S.cash < fee ? 'disabled' : ''}>Ask around</button>
+        </div>`;
+      }).join('')}</div>
+      <div class="small muted" style="margin-top:10px">A broker does not wait to be shown things — he tells people what he is looking for.
+      If you want to lay out plots you need land by the acre, and it will not turn up on its own.</div>
+    </div>
+
     <div class="card tight"><span class="small muted">You do not have to buy. <b>Broker it</b> introduces a buyer for one to two per cent of the price, uses none of your capital, and hands the upside to somebody else — which is how you have paid your bills for three years.<br>
     Stamp duty, transfer duty and registration today: <b>${pct(dutyRate(S.month))}</b> of consideration.
     Every rupee of land you buy costs ${pct(1 + dutyRate(S.month), 1)} of the price. Investigate before you commit — the cheap ones are cheap for a reason.</span></div>
@@ -662,6 +675,13 @@ function bindView() {
   if (!v) return;
   v.querySelectorAll('[data-deal]').forEach((b) => { b.onclick = () => showDeal(b.dataset.deal); });
   v.querySelectorAll('[data-broker]').forEach((b) => { b.onclick = () => doBroker(b.dataset.broker); });
+  v.querySelectorAll('[data-brief]').forEach((b) => {
+    b.onclick = () => {
+      const r = askBrokers(S, b.dataset.brief);
+      say(r.ok ? `Word is out. ${r.found.length} parcel${r.found.length === 1 ? '' : 's'} on the desk: ${r.found.join('; ')}` : r.msg);
+      refresh(S); saveGame(S); render();
+    };
+  });
   v.querySelectorAll('[data-build]').forEach((b) => { b.onclick = () => showBuild(b.dataset.build); });
   v.querySelectorAll('[data-sellland]').forEach((b) => {
     b.onclick = () => { const r = sellParcel(S, b.dataset.sellland); say(r.ok ? `Sold for ${money(r.net)} — a ${r.gain >= 0 ? 'gain' : 'loss'} of ${money(Math.abs(r.gain))}.` : r.msg); refresh(S); saveGame(S); render(); };
@@ -941,7 +961,14 @@ function showBuild(parcelId) {
   const types = Object.values(BUILD_TYPES).filter((b) => b.minSqFt <= cap);
   const layouts = Object.values(LAYOUT_TYPES).filter((l) => l.minAcres * SQYD_PER_ACRE <= site);
   const allOptions = [...types.map((t) => ({ ...t, kind: 'build' })), ...layouts.map((l) => ({ ...l, kind: 'layout' }))];
-  if (!allOptions.length) return say('There is nothing worth doing on this parcel at present.');
+  if (!allOptions.length) {
+    const smallestLayout = Math.min(...Object.values(LAYOUT_TYPES).map((l) => l.minAcres)) * SQYD_PER_ACRE;
+    return say(
+      `This parcel has ${num(site)} sq yd left, which permits ${num(cap)} sq ft of building — below the `
+      + `${num(3000)} sq ft an apartment block needs, and below the ${num(Math.round(smallestLayout))} sq yd `
+      + `(${(smallestLayout / SQYD_PER_ACRE).toFixed(1)} acres) the smallest layout needs. Sell it, or buy something adjoining.`,
+    );
+  }
 
   const committed = remainingCommitments(S);
   // Default to the largest phase the player can actually fund, not the largest the plot
@@ -1050,6 +1077,11 @@ function showBuild(parcelId) {
         <label class="stack" style="gap:4px"><span class="small muted" id="bsflabel">Built-up area for this phase (sq ft), max ${num(cap)}</span>
           <input id="bsf" type="number" value="${initialSize}" max="${cap}" step="500"></label>
       </div>
+      ${!layouts.length ? `<div class="small muted" style="margin-top:10px">
+        This parcel is ${num(site)} sq yd. Laying out plots needs at least
+        ${num(Math.round(Math.min(...Object.values(LAYOUT_TYPES).map((l) => l.minAcres)) * SQYD_PER_ACRE))} sq yd —
+        about half an acre — so only building is available here. Ask your brokers for acreage on the deal desk.
+      </div>` : ''}
       <div class="card tight" style="margin-top:12px" id="estimate"></div>
       <div class="small muted" style="margin-top:10px" id="btdesc"></div>
     </div>

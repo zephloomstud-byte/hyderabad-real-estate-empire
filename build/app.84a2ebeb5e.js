@@ -1283,7 +1283,7 @@
       conversionMonths: 0,
       approvalMonths: 0,
       months: 6,
-      minAcres: 1,
+      minAcres: 0.5,
       unapproved: true,
       desc: "Murram roads, boundary stones, a painted arch and a broker with a map. No conversion, no sanction. Sells fast and cheap to buyers who are not asking questions, and every plot you sell carries a defect you have passed on to somebody else."
     },
@@ -1296,7 +1296,7 @@
       conversionMonths: 5,
       approvalMonths: 7,
       months: 12,
-      minAcres: 2,
+      minAcres: 1,
       desc: "Land conversion out of agricultural use, sanctioned layout, black-top roads, storm drains, water lines, electricity and ten per cent surrendered as open space. Takes two years before a single plot is sold, and the sanction is most of what the buyer is paying for."
     },
     gated: {
@@ -1308,7 +1308,7 @@
       conversionMonths: 5,
       approvalMonths: 8,
       months: 18,
-      minAcres: 5,
+      minAcres: 3,
       desc: "Compound wall, gate and security cabin, concrete roads, underground utilities, avenue plantation and a clubhouse. Sells at a serious premium to buyers who want an address rather than an investment, and needs a corridor that has already arrived."
     }
   };
@@ -4534,6 +4534,69 @@ A proper refurbishment is about ${money(cost)}.`,
     saveRng(s, rng);
     return result;
   }
+  var BRIEFS = {
+    acreage: {
+      label: "Acreage for a layout",
+      hint: "Farmland and large holdings on the periphery, big enough to lay out and sell as plots.",
+      fee: 6e3,
+      count: 3
+    },
+    plot: {
+      label: "A plot to build on",
+      hint: "Serviced plots in developed localities, the size a building actually goes on.",
+      fee: 4e3,
+      count: 3
+    },
+    cheap: {
+      label: "Anything distressed",
+      hint: "Somebody who needs to sell this month. Cheap, and cheap for a reason.",
+      fee: 5e3,
+      count: 3
+    }
+  };
+  function askBrokers(s, briefKey) {
+    const brief = BRIEFS[briefKey];
+    if (!brief) return { ok: false, msg: "No such brief." };
+    const fee = Math.round(brief.fee * costIndex(s.month));
+    if (s.cash < fee) return { ok: false, msg: `The retainer is ${money(fee)} and you cannot spare it.` };
+    pay(s, fee);
+    const rng = getRng(s);
+    const found = [];
+    for (let i = 0; i < brief.count; i++) {
+      let o = null;
+      if (briefKey === "acreage") {
+        const agri = LOCALITIES.filter((l) => l.tags.includes("agri") || l.tags.includes("far") || l.tags.includes("periphery"));
+        const loc = rng.pick(agri.length ? agri : LOCALITIES);
+        o = makeLandOffer(s.month, s, rng, { locality: loc.id, big: true });
+        if (o.areaSqYd < SQYD_PER_ACRE * 0.6) {
+          o.areaSqYd = Math.round(SQYD_PER_ACRE * rng.range(0.7, 5));
+          o.price = o.askRate * o.areaSqYd;
+          o.floor = Math.round(o.price * 0.86);
+          o.label = `${(o.areaSqYd / SQYD_PER_ACRE).toFixed(2)} acres at ${o.localityName}`;
+        }
+      } else if (briefKey === "cheap") {
+        o = makeLandOffer(s.month, s, rng, { distress: true });
+      } else {
+        const built = LOCALITIES.filter((l) => ["core", "northwest", "east"].includes(l.zone));
+        o = makeLandOffer(s.month, s, rng, { locality: rng.pick(built).id });
+      }
+      if (!o) continue;
+      o.brief = briefKey;
+      o.expiresAt = s.month + rng.int(2, 5);
+      s.offers.push(o);
+      found.push(o.label);
+    }
+    saveRng(s, rng);
+    s.relations.landowners = clamp(s.relations.landowners + 1, 0, 100);
+    s.ledger.push({ m: s.month, type: "Broker retainer", amount: -fee, note: brief.label });
+    s.news.push({
+      m: s.month,
+      tag: "DEAL",
+      head: `Put the word out: ${brief.label.toLowerCase()}`,
+      body: `${money(fee)} between three brokers. Within a fortnight they came back with ${found.length === 1 ? "one thing" : found.length + " things"}: ${found.join("; ")}. Telling people what you want is most of this trade.`
+    });
+    return { ok: true, found, fee };
+  }
   function brokerDeal(s, offerId) {
     const offer = s.offers.find((o) => o.id === offerId);
     if (!offer) return { ok: false, msg: "That offer is gone." };
@@ -6013,6 +6076,19 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
   views.deals = () => {
     if (!S.offers.length) return emptyCard("No live opportunities this month. Advance the calendar \u2014 brokers will bring you something.");
     return `<div class="stack">
+    <div class="card"><h3>Put the word out</h3>
+      <div class="grid g3">${Object.entries(BRIEFS).map(([k, b]) => {
+      const fee = Math.round(b.fee * costIndex(S.month));
+      return `<div class="card tight">
+          <div class="spread"><b>${esc(b.label)}</b><span class="pill">${money(fee)}</span></div>
+          <div class="small muted" style="margin:6px 0">${esc(b.hint)}</div>
+          <button class="btn sm" data-brief="${k}" ${S.cash < fee ? "disabled" : ""}>Ask around</button>
+        </div>`;
+    }).join("")}</div>
+      <div class="small muted" style="margin-top:10px">A broker does not wait to be shown things \u2014 he tells people what he is looking for.
+      If you want to lay out plots you need land by the acre, and it will not turn up on its own.</div>
+    </div>
+
     <div class="card tight"><span class="small muted">You do not have to buy. <b>Broker it</b> introduces a buyer for one to two per cent of the price, uses none of your capital, and hands the upside to somebody else \u2014 which is how you have paid your bills for three years.<br>
     Stamp duty, transfer duty and registration today: <b>${pct(dutyRate(S.month))}</b> of consideration.
     Every rupee of land you buy costs ${pct(1 + dutyRate(S.month), 1)} of the price. Investigate before you commit \u2014 the cheap ones are cheap for a reason.</span></div>
@@ -6373,6 +6449,15 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
     v.querySelectorAll("[data-broker]").forEach((b) => {
       b.onclick = () => doBroker(b.dataset.broker);
     });
+    v.querySelectorAll("[data-brief]").forEach((b) => {
+      b.onclick = () => {
+        const r = askBrokers(S, b.dataset.brief);
+        say(r.ok ? `Word is out. ${r.found.length} parcel${r.found.length === 1 ? "" : "s"} on the desk: ${r.found.join("; ")}` : r.msg);
+        refresh(S);
+        saveGame(S);
+        render();
+      };
+    });
     v.querySelectorAll("[data-build]").forEach((b) => {
       b.onclick = () => showBuild(b.dataset.build);
     });
@@ -6710,7 +6795,12 @@ Not every introduction closes. Yours close more often the better you know the ma
     const types = Object.values(BUILD_TYPES).filter((b) => b.minSqFt <= cap);
     const layouts = Object.values(LAYOUT_TYPES).filter((l) => l.minAcres * SQYD_PER_ACRE <= site);
     const allOptions = [...types.map((t) => ({ ...t, kind: "build" })), ...layouts.map((l) => ({ ...l, kind: "layout" }))];
-    if (!allOptions.length) return say("There is nothing worth doing on this parcel at present.");
+    if (!allOptions.length) {
+      const smallestLayout = Math.min(...Object.values(LAYOUT_TYPES).map((l) => l.minAcres)) * SQYD_PER_ACRE;
+      return say(
+        `This parcel has ${num(site)} sq yd left, which permits ${num(cap)} sq ft of building \u2014 below the ${num(3e3)} sq ft an apartment block needs, and below the ${num(Math.round(smallestLayout))} sq yd (${(smallestLayout / SQYD_PER_ACRE).toFixed(1)} acres) the smallest layout needs. Sell it, or buy something adjoining.`
+      );
+    }
     const committed = remainingCommitments(S);
     const fundableSize = (typeId) => {
       if (isLayout(typeId)) {
@@ -6813,6 +6903,11 @@ Not every introduction closes. Yours close more often the better you know the ma
         <label class="stack" style="gap:4px"><span class="small muted" id="bsflabel">Built-up area for this phase (sq ft), max ${num(cap)}</span>
           <input id="bsf" type="number" value="${initialSize}" max="${cap}" step="500"></label>
       </div>
+      ${!layouts.length ? `<div class="small muted" style="margin-top:10px">
+        This parcel is ${num(site)} sq yd. Laying out plots needs at least
+        ${num(Math.round(Math.min(...Object.values(LAYOUT_TYPES).map((l) => l.minAcres)) * SQYD_PER_ACRE))} sq yd \u2014
+        about half an acre \u2014 so only building is available here. Ask your brokers for acreage on the deal desk.
+      </div>` : ""}
       <div class="card tight" style="margin-top:12px" id="estimate"></div>
       <div class="small muted" style="margin-top:10px" id="btdesc"></div>
     </div>
