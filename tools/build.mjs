@@ -51,10 +51,11 @@ ${fontCss}
 ${css}
 </style>`;
 
+const singleHash = createHash('sha256').update(js).digest('hex').slice(0, 10);
 const body = `<div id="app"></div>
 <div id="modal-root"></div>
 <script>
-${js}
+${js.replace(/__BUILD_ID__/g, singleHash)}
 </script>`;
 
 writeFileSync(join(DIST, 'artifact.html'), `${head}\n${body}\n`);
@@ -82,11 +83,14 @@ ${body}
 // contents: change a byte and the filename changes, and a stale copy becomes unreachable
 // rather than merely unlucky. It also turns twelve round trips into one.
 const hash = createHash('sha256').update(js).digest('hex').slice(0, 10);
+// Stamp the build id into the code so the running version is visible in the interface.
+// Without it, "did you get the fix?" is unanswerable for both of us.
+const stamped = js.replace(/__BUILD_ID__/g, hash);
 const bundleName = `app.${hash}.js`;
 
 // Drop any bundle from a previous build so the directory does not accumulate.
 for (const f of readdirSync(BUILD)) if (/^app\.[0-9a-f]{10}\.js$/.test(f)) rmSync(join(BUILD, f));
-writeFileSync(join(BUILD, bundleName), js);
+writeFileSync(join(BUILD, bundleName), stamped);
 
 const index = readFileSync(join(ROOT, 'index.html'), 'utf8')
   .replace(/<script[^>]*src="[^"]*"[^>]*><\/script>/, `<script src="build/${bundleName}"></script>`);

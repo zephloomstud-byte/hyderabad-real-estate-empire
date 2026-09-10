@@ -202,6 +202,30 @@ export const ZONES = [...new Set(LOCALITIES.map((l) => l.zone))];
  * Keeping the counters in the saved state fixes it for good: the sequence is part of the
  * game, not part of the session.
  */
+/**
+ * The numeric part of an id, or 0 if it does not belong to this prefix.
+ *
+ * Deliberately written without a regular expression built from a template literal: the
+ * first version of this used `new RegExp(`^${prefix}(\d+)$`)`, and a lost backslash
+ * turned the pattern into `^PL(d+)$`, which matches nothing. Every sequence therefore
+ * reseeded to zero, the repair handed a duplicate back its own id, and the whole thing
+ * reported success while fixing nothing at all.
+ *
+ * Note that a prefix must not swallow a longer one: 'P' against 'PL1' leaves 'L1', which
+ * is not a number, so parcels are never mistaken for projects.
+ */
+export function idNumber(id, prefix) {
+  const str = String(id == null ? '' : id);
+  if (!str.startsWith(prefix)) return 0;
+  const rest = str.slice(prefix.length);
+  if (!rest.length) return 0;
+  for (let i = 0; i < rest.length; i++) {
+    const c = rest.charCodeAt(i);
+    if (c < 48 || c > 57) return 0;
+  }
+  return Number(rest);
+}
+
 export function nextId(s, prefix) {
   if (!s.seq) s.seq = {};
   s.seq[prefix] = (s.seq[prefix] || 0) + 1;
@@ -216,10 +240,7 @@ export function reseedIds(s) {
   if (!s.seq) s.seq = {};
   const bump = (prefix, list) => {
     let max = s.seq[prefix] || 0;
-    for (const item of list || []) {
-      const m = String(item && item.id || '').match(new RegExp(`^${prefix}(\d+)$`));
-      if (m) max = Math.max(max, Number(m[1]));
-    }
+    for (const item of list || []) max = Math.max(max, idNumber(item && item.id, prefix));
     s.seq[prefix] = max;
   };
   bump('PL', s.parcels);

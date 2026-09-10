@@ -16,10 +16,14 @@ import {
   repayLoan, quotePrepayment, remainingTenure, interestIfHeld, brokerDeal, startGame,
   estimateLayout, isLayout, plotPrice,
   applyForRegularisation, regularisationQuote, lrsWindow, askBrokers, BRIEFS,
+  findDuplicateIds, repairDuplicateIds, reseedIds, freeSqYd as freeOf,
   quoteLRD, takeLRD, lrdAvailable,
   commissionSurvey, intelLevel, surveyCost, INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN,
 } from '../sim/engine.js';
 import { materialPrice, wage, fuzzRate } from '../sim/market.js';
+
+// Replaced with the content hash at build time. Left as-is when running from source.
+const BUILD_ID = '__BUILD_ID__'.startsWith('__') ? 'source' : '__BUILD_ID__';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -609,6 +613,19 @@ views.books = () => {
         <td class="small muted">${esc(l.note || '')}</td><td class="n ${l.amount < 0 ? 'neg' : 'pos'}">${money(l.amount, { sign: true })}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Nothing yet.</td></tr>'}
     </table></div>
 
+    <div class="card"><h3>Diagnostics</h3>
+      ${row('Build running', BUILD_ID)}
+      ${row('Save written at month', String(S.month) + ' — ' + dateLabel(S.month))}
+      ${row('Internal references repaired', S.idsRepaired ? 'yes' : 'not yet')}
+      <div class="inline" style="margin-top:10px">
+        <button class="btn ghost" id="diagnose">Check this save for problems</button>
+        <button class="btn ghost" id="repairnow">Repair internal references</button>
+      </div>
+      <div id="diagout"></div>
+      <div class="small muted" style="margin-top:10px">If something in the game insists a holding is empty when you can see it is not,
+      run the check and send the result. It reports what is actually in your save rather than what ought to be.</div>
+    </div>
+
     <div class="card"><h3>Danger zone</h3>
       <div class="inline"><button class="btn ghost" id="export">Export save</button>
       <button class="btn danger" id="restart">Abandon and start again</button></div>
@@ -752,6 +769,43 @@ function bindView() {
   v.querySelectorAll('[data-ask]').forEach((r) => {
     r.onchange = () => { setAsk(S, r.dataset.ask, (Number(r.value) / 100) * Number(r.dataset.mkt)); saveGame(S); render(); };
   });
+  const dg = $('#diagnose'); if (dg) dg.onclick = () => {
+    const dupes = findDuplicateIds(S);
+    // The failure people actually hit: a parcel the land bank draws as available, which
+    // resolves by id to a different, exhausted one.
+    const mismatched = [];
+    for (const p of S.parcels.filter((x) => x.owned && !x.consumed)) {
+      const resolved = S.parcels.find((x) => x.id === p.id);
+      if (resolved !== p) mismatched.push(`${p.label} (id ${p.id}) resolves to ${resolved.label}`);
+    }
+    const zeroFree = S.parcels.filter((x) => x.owned && !x.consumed && freeOf(x) === 0)
+      .map((x) => `${x.label}: ${num(x.areaSqYd)} sq yd owned, ${num(x.usedSqYd || 0)} used`);
+    const lines = [
+      `Build running: ${BUILD_ID}`,
+      `Parcels owned: ${S.parcels.filter((x) => x.owned && !x.consumed).length}`,
+      `Duplicate ids: ${dupes.length ? dupes.join(', ') : 'none'}`,
+      `Parcels resolving to the wrong object: ${mismatched.length ? mismatched.join(' | ') : 'none'}`,
+      `Parcels with no land left: ${zeroFree.length ? zeroFree.join(' | ') : 'none'}`,
+      `References repaired: ${S.idsRepaired ? 'yes' : 'no'}`,
+    ];
+    $('#diagout').innerHTML = `<div class="card tight" style="margin-top:12px">
+      <pre class="small mono" style="white-space:pre-wrap;overflow-x:auto;margin:0">${esc(lines.join(String.fromCharCode(10)))}</pre>
+      <div class="small muted" style="margin-top:8px">${dupes.length || mismatched.length
+        ? 'Problems found. Press <b>Repair internal references</b>, then try the Build button again.'
+        : 'Nothing wrong with the references in this save. If a button is still misbehaving, send this text.'}</div></div>`;
+  };
+
+  const rp = $('#repairnow'); if (rp) rp.onclick = () => {
+    reseedIds(S);
+    const repaired = repairDuplicateIds(S);
+    S.idsRepaired = true;
+    refresh(S); saveGame(S);
+    say(repaired.length
+      ? `Repaired ${repaired.length} internal reference${repaired.length === 1 ? '' : 's'}. Try Build again.`
+      : 'Nothing needed repairing in this save.');
+    render();
+  };
+
   const ex = $('#export'); if (ex) ex.onclick = async () => {
     const json = JSON.stringify(S);
     // Try a download first, then the clipboard: embedded browser panes block

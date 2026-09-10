@@ -1305,6 +1305,7 @@ function checkEnd(s) {
 // ------------------------------------------------------------------ re-exports for UI
 
 export {
+  findDuplicateIds, repairDuplicateIds, reseedIds,
   abandonProject, remainingCommitments, fundingSchedule, freeSqYd, landConsumedBy,
   estimateLayout, isLayout, plotPrice, plotAbsorption, lrdAvailable,
   intelLevel, surveyCost, fuzzRate, INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN,

@@ -1221,6 +1221,17 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     }
   }
   var ZONES = [...new Set(LOCALITIES.map((l) => l.zone))];
+  function idNumber(id, prefix) {
+    const str = String(id == null ? "" : id);
+    if (!str.startsWith(prefix)) return 0;
+    const rest = str.slice(prefix.length);
+    if (!rest.length) return 0;
+    for (let i = 0; i < rest.length; i++) {
+      const c = rest.charCodeAt(i);
+      if (c < 48 || c > 57) return 0;
+    }
+    return Number(rest);
+  }
   function nextId(s, prefix) {
     if (!s.seq) s.seq = {};
     s.seq[prefix] = (s.seq[prefix] || 0) + 1;
@@ -1230,10 +1241,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     if (!s.seq) s.seq = {};
     const bump = (prefix, list) => {
       let max = s.seq[prefix] || 0;
-      for (const item of list || []) {
-        const m = String(item && item.id || "").match(new RegExp(`^${prefix}(d+)$`));
-        if (m) max = Math.max(max, Number(m[1]));
-      }
+      for (const item of list || []) max = Math.max(max, idNumber(item && item.id, prefix));
       s.seq[prefix] = max;
     };
     bump("PL", s.parcels);
@@ -1270,6 +1278,25 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
       }
     }
     return repaired;
+  }
+  function findDuplicateIds(s) {
+    const dupes = [];
+    for (const [name, list] of [
+      ["parcels", s.parcels],
+      ["projects", s.projects],
+      ["assets", s.assets],
+      ["loans", s.loans],
+      ["staff", s.staff],
+      ["offers", s.offers]
+    ]) {
+      const seen = /* @__PURE__ */ new Set();
+      for (const item of list || []) {
+        if (!item || !item.id) continue;
+        if (seen.has(item.id)) dupes.push(`${name}:${item.id}`);
+        seen.add(item.id);
+      }
+    }
+    return dupes;
   }
 
   // src/data/costs.js
@@ -6162,6 +6189,7 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
   }
 
   // src/ui/app.js
+  var BUILD_ID = "b81f7aeef2".startsWith("__") ? "source" : "b81f7aeef2";
   var $ = (sel, root = document) => root.querySelector(sel);
   var app = $("#app");
   var modalRoot = $("#modal-root");
@@ -6707,6 +6735,19 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
         <td class="small muted">${esc(l.note || "")}</td><td class="n ${l.amount < 0 ? "neg" : "pos"}">${money(l.amount, { sign: true })}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">Nothing yet.</td></tr>'}
     </table></div>
 
+    <div class="card"><h3>Diagnostics</h3>
+      ${row("Build running", BUILD_ID)}
+      ${row("Save written at month", String(S.month) + " \u2014 " + dateLabel(S.month))}
+      ${row("Internal references repaired", S.idsRepaired ? "yes" : "not yet")}
+      <div class="inline" style="margin-top:10px">
+        <button class="btn ghost" id="diagnose">Check this save for problems</button>
+        <button class="btn ghost" id="repairnow">Repair internal references</button>
+      </div>
+      <div id="diagout"></div>
+      <div class="small muted" style="margin-top:10px">If something in the game insists a holding is empty when you can see it is not,
+      run the check and send the result. It reports what is actually in your save rather than what ought to be.</div>
+    </div>
+
     <div class="card"><h3>Danger zone</h3>
       <div class="inline"><button class="btn ghost" id="export">Export save</button>
       <button class="btn danger" id="restart">Abandon and start again</button></div>
@@ -6882,6 +6923,37 @@ The money goes now either way. It is not refunded if the application fails.`,
         render();
       };
     });
+    const dg = $("#diagnose");
+    if (dg) dg.onclick = () => {
+      const dupes = findDuplicateIds(S);
+      const mismatched = [];
+      for (const p of S.parcels.filter((x) => x.owned && !x.consumed)) {
+        const resolved = S.parcels.find((x) => x.id === p.id);
+        if (resolved !== p) mismatched.push(`${p.label} (id ${p.id}) resolves to ${resolved.label}`);
+      }
+      const zeroFree = S.parcels.filter((x) => x.owned && !x.consumed && freeSqYd(x) === 0).map((x) => `${x.label}: ${num(x.areaSqYd)} sq yd owned, ${num(x.usedSqYd || 0)} used`);
+      const lines = [
+        `Build running: ${BUILD_ID}`,
+        `Parcels owned: ${S.parcels.filter((x) => x.owned && !x.consumed).length}`,
+        `Duplicate ids: ${dupes.length ? dupes.join(", ") : "none"}`,
+        `Parcels resolving to the wrong object: ${mismatched.length ? mismatched.join(" | ") : "none"}`,
+        `Parcels with no land left: ${zeroFree.length ? zeroFree.join(" | ") : "none"}`,
+        `References repaired: ${S.idsRepaired ? "yes" : "no"}`
+      ];
+      $("#diagout").innerHTML = `<div class="card tight" style="margin-top:12px">
+      <pre class="small mono" style="white-space:pre-wrap;overflow-x:auto;margin:0">${esc(lines.join(String.fromCharCode(10)))}</pre>
+      <div class="small muted" style="margin-top:8px">${dupes.length || mismatched.length ? "Problems found. Press <b>Repair internal references</b>, then try the Build button again." : "Nothing wrong with the references in this save. If a button is still misbehaving, send this text."}</div></div>`;
+    };
+    const rp = $("#repairnow");
+    if (rp) rp.onclick = () => {
+      reseedIds(S);
+      const repaired = repairDuplicateIds(S);
+      S.idsRepaired = true;
+      refresh(S);
+      saveGame(S);
+      say(repaired.length ? `Repaired ${repaired.length} internal reference${repaired.length === 1 ? "" : "s"}. Try Build again.` : "Nothing needed repairing in this save.");
+      render();
+    };
     const ex = $("#export");
     if (ex) ex.onclick = async () => {
       const json = JSON.stringify(S);
