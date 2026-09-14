@@ -165,11 +165,32 @@ export function emiFor(principal, annualRate, months) {
   return (principal * r * f) / (f - 1);
 }
 
+/**
+ * Persist the game. Returns { ok, bytes, error }.
+ *
+ * This used to swallow every failure and return false, which meant a player whose save
+ * outgrew the browser's quota simply stopped being saved, with nothing on screen to say
+ * so, and discovered it only when a reload threw away hours of play.
+ */
 export function saveGame(s) {
+  let json;
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(s));
-    return true;
-  } catch (e) { return false; }
+    json = JSON.stringify(s);
+  } catch (e) {
+    return { ok: false, bytes: 0, error: 'The game state could not be serialised: ' + e.message };
+  }
+  try {
+    localStorage.setItem(SAVE_KEY, json);
+    return { ok: true, bytes: json.length };
+  } catch (e) {
+    const quota = /quota|exceeded/i.test(String(e && (e.name + ' ' + e.message)));
+    return {
+      ok: false, bytes: json.length,
+      error: quota
+        ? `The save is ${Math.round(json.length / 1024)} KB and the browser has run out of room for it.`
+        : 'The browser refused to save: ' + (e && e.message),
+    };
+  }
 }
 
 export function loadGame() {
@@ -303,4 +324,60 @@ export function findDuplicateIds(s) {
     }
   }
   return dupes;
+}
+
+// ---------------------------------------------------------------- compaction
+
+/**
+ * Drop history the game no longer needs.
+ *
+ * Nothing here was ever pruned. By 2045 a save carried 836 projects of which 12 were
+ * live, 820 parcels most of them built out years earlier, 4,300 news items and 2,000
+ * ledger lines — about 1.9 MB of JSON. Browsers store localStorage as UTF-16, so that
+ * occupied roughly 3.8 MB of a 5 MB quota. Every Advance click serialised and wrote the
+ * whole thing synchronously on the main thread, which is what made a long game feel like
+ * it was freezing, and a little further on the write would have failed outright and the
+ * game would have silently stopped saving.
+ *
+ * What survives is everything the rules still read. Finished projects are summarised in
+ * stats already; built-out parcels are kept only while something still points at them.
+ * Recent news and ledger stay, older entries go. The yearbook, which is the actual record
+ * of the run, is never trimmed.
+ */
+export const KEEP = { news: 400, ledger: 600, doneProjects: 40 };
+
+export function compactState(s) {
+  const before = {
+    news: (s.news || []).length, ledger: (s.ledger || []).length,
+    projects: (s.projects || []).length, parcels: (s.parcels || []).length,
+  };
+
+  if (s.news && s.news.length > KEEP.news) s.news = s.news.slice(-KEEP.news);
+  if (s.ledger && s.ledger.length > KEEP.ledger) s.ledger = s.ledger.slice(-KEEP.ledger);
+
+  if (Array.isArray(s.projects)) {
+    const live = s.projects.filter((p) => !p.done);
+    const done = s.projects.filter((p) => p.done).slice(-KEEP.doneProjects);
+    s.projects = [...done, ...live];
+  }
+
+  if (Array.isArray(s.parcels)) {
+    // A parcel stays while anything still refers to it: a live project, a joint venture,
+    // a loan it secures, or a pending regularisation.
+    const referenced = new Set();
+    for (const p of s.projects || []) if (!p.done && p.parcelId) referenced.add(p.parcelId);
+    for (const j of s.jvs || []) if (j.parcelId) referenced.add(j.parcelId);
+    for (const l of s.loans || []) for (const c of l.collateral || []) referenced.add(c);
+    for (const r of s.regularisations || []) if (r.kind === 'parcel') referenced.add(r.id);
+    s.parcels = s.parcels.filter((p) => !p.consumed || referenced.has(p.id) || p.owned === false && referenced.has(p.id));
+    // Sold parcels (owned false) that nothing references are gone too.
+    s.parcels = s.parcels.filter((p) => p.owned !== false || referenced.has(p.id));
+  }
+
+  return {
+    news: before.news - s.news.length,
+    ledger: before.ledger - s.ledger.length,
+    projects: before.projects - s.projects.length,
+    parcels: before.parcels - s.parcels.length,
+  };
 }

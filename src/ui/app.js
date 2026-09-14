@@ -15,7 +15,7 @@ import {
   abandonProject, remainingCommitments, freeSqYd,
   repayLoan, quotePrepayment, remainingTenure, interestIfHeld, brokerDeal, startGame,
   estimateLayout, isLayout, plotPrice,
-  applyForRegularisation, regularisationQuote, lrsWindow, askBrokers, BRIEFS,
+  applyForRegularisation, regularisationQuote, lrsWindow, askBrokers, BRIEFS, compactState,
   findDuplicateIds, repairDuplicateIds, reseedIds, freeSqYd as freeOf, continuePast2020, nextHorizon,
   quoteLRD, takeLRD, lrdAvailable,
   commissionSurvey, intelLevel, surveyCost, INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN,
@@ -33,6 +33,9 @@ let S = null;
 let tab = 'dashboard';
 let modal = null;
 let toast = null;
+let advancing = false;
+/** Once a player has looked at an ending, stop forcing it back open on every render. */
+let endingDismissed = false;
 
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -40,8 +43,30 @@ const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 
 function boot() {
   const saved = loadGame();
-  if (saved) { S = refresh(saved); render(); }
-  else renderStart();
+  if (saved) {
+    // Saves from before compaction existed can be several megabytes. Shed the dead
+    // weight once, on open, so the first Advance is not the one that pays for it.
+    delete saved._idsChecked;   // left behind by one earlier build
+    compactState(saved);
+    S = refresh(saved);
+    persist();
+    render();
+  } else renderStart();
+}
+
+/**
+ * Save, and tell the player if it failed. Previously a failed save was silent, so a game
+ * that outgrew the browser's quota simply stopped being saved until a reload lost it.
+ */
+let lastSaveWarning = 0;
+function persist() {
+  if (!S) return;
+  const r = saveGame(S);
+  if (!r.ok && Date.now() - lastSaveWarning > 15000) {
+    lastSaveWarning = Date.now();
+    say(`Your game did not save. ${r.error} Use Books → Export save to keep a copy before you close this tab.`);
+  }
+  return r;
 }
 
 function renderStart() {
@@ -92,7 +117,7 @@ function renderStart() {
       firmName: $('#f-firm').value.trim() || null,
     });
     tab = 'deals';
-    saveGame(S);
+    persist();
     render();
   };
 }
@@ -122,10 +147,12 @@ function render() {
         ${stat('Reputation', Math.round(S.reputation) + ' / 100')}
         ${stat('PLR', S.macro.plr.toFixed(2) + '%')}
       </div>
-      <button class="advance" id="adv" ${S.over || S.pendingEvent ? 'disabled' : ''}>
-        ${S.over ? 'Simulation ended' : 'Advance one month'}
-        <small>${S.over ? '' : dateLabel(S.month + 1)}</small>
-      </button>
+      ${S.over
+        ? `<button class="advance" id="reopen-ending">Simulation ended<small>Show the result</small></button>`
+        : `<button class="advance" id="adv" ${S.pendingEvent || advancing ? 'disabled' : ''}>
+        ${advancing ? 'Working…' : 'Advance one month'}
+        <small>${dateLabel(S.month + 1)}</small>
+      </button>`}
     </div>
     <nav class="tabs">
       ${tabBtn('dashboard', 'Dashboard')}
@@ -143,18 +170,44 @@ function render() {
     ${toast ? `<div style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:3px;z-index:90;max-width:560px;box-shadow:var(--shadow)">${esc(toast)}</div>` : ''}
   `;
 
-  $('#adv').onclick = () => {
-    advanceMonth(S);
-    saveGame(S);
-    if (S.pendingEvent) showEvent();
-    else if (S.over) showEnding();
-    render();
+  const reopen = $('#reopen-ending');
+  if (reopen) reopen.onclick = () => { endingDismissed = false; showEnding(); };
+
+  const advBtn = $('#adv');
+  if (advBtn) advBtn.onclick = () => {
+    // Ignore clicks that arrive while a month is still being worked out. Before this,
+    // tapping Advance a few times on a long game queued every click behind a two-megabyte
+    // save write and the page locked up for seconds at a time.
+    if (advancing) return;
+    advancing = true;
+    const btn = $('#adv');
+    if (btn) { btn.disabled = true; btn.firstChild.textContent = 'Working…'; }
+    // Yield once so the button can repaint, then compute the month.
+    //
+    // Not requestAnimationFrame: rAF is paused in background tabs, so a player who clicked
+    // Advance and switched to another tab came back to a button stuck on "Working…" with
+    // the month never run. Edge suspends background tabs aggressively. setTimeout still
+    // lets the browser paint between tasks, and it runs whether or not the tab is visible.
+    setTimeout(() => {
+      try {
+        advanceMonth(S);
+        persist();
+      } catch (err) {
+        console.error('advance failed', err);
+        say('Something went wrong working out that month. Your save is intact — reload the page and try again.');
+      } finally {
+        advancing = false;
+      }
+      if (S.pendingEvent) showEvent();
+      else if (S.over) showEnding();
+      render();
+    }, 0);
   };
   app.querySelectorAll('.tab').forEach((b) => { b.onclick = () => { tab = b.dataset.tab; render(); }; });
   bindView();
 
   if (S.pendingEvent && !modal) showEvent();
-  if (S.over && !modal) showEnding();
+  if (S.over && !modal && !endingDismissed) showEnding();
 }
 
 /**
@@ -696,24 +749,24 @@ function bindView() {
     b.onclick = () => {
       const r = askBrokers(S, b.dataset.brief);
       say(r.ok ? `Word is out. ${r.found.length} parcel${r.found.length === 1 ? '' : 's'} on the desk: ${r.found.join('; ')}` : r.msg);
-      refresh(S); saveGame(S); render();
+      refresh(S); persist(); render();
     };
   });
   v.querySelectorAll('[data-build]').forEach((b) => { b.onclick = () => showBuild(b.dataset.build); });
   v.querySelectorAll('[data-sellland]').forEach((b) => {
-    b.onclick = () => { const r = sellParcel(S, b.dataset.sellland); say(r.ok ? `Sold for ${money(r.net)} — a ${r.gain >= 0 ? 'gain' : 'loss'} of ${money(Math.abs(r.gain))}.` : r.msg); refresh(S); saveGame(S); render(); };
+    b.onclick = () => { const r = sellParcel(S, b.dataset.sellland); say(r.ok ? `Sold for ${money(r.net)} — a ${r.gain >= 0 ? 'gain' : 'loss'} of ${money(Math.abs(r.gain))}.` : r.msg); refresh(S); persist(); render(); };
   });
   v.querySelectorAll('[data-survey]').forEach((b) => {
     b.onclick = () => {
       const id = b.dataset.survey;
       const r = commissionSurvey(S, id);
       say(r.ok ? `Survey commissioned. ${money(r.cost)}. Real numbers, good for about two years.` : r.msg);
-      refresh(S); saveGame(S); render();
+      refresh(S); persist(); render();
     };
   });
   v.querySelectorAll('[data-lrd]').forEach((b) => { b.onclick = () => showLRD(b.dataset.lrd); });
   v.querySelectorAll('[data-sellasset]').forEach((b) => {
-    b.onclick = () => { const r = sellAsset(S, b.dataset.sellasset); say(r.ok ? `Sold for ${money(r.net)}.` : r.msg); refresh(S); saveGame(S); render(); };
+    b.onclick = () => { const r = sellAsset(S, b.dataset.sellasset); say(r.ok ? `Sold for ${money(r.net)}.` : r.msg); refresh(S); persist(); render(); };
   });
   v.querySelectorAll('[data-reg]').forEach((b) => {
     b.onclick = () => {
@@ -732,7 +785,7 @@ function bindView() {
         onConfirm: () => {
           const r = applyForRegularisation(S, kind, id);
           say(r.ok ? `Application filed. ${q.months} months for an answer.` : r.msg);
-          refresh(S); saveGame(S); render();
+          refresh(S); persist(); render();
         },
       });
     };
@@ -753,7 +806,7 @@ function bindView() {
         onConfirm: () => {
           const r = abandonProject(S, b.dataset.abandon);
           say(r.ok ? `Site sold on. Recovered ${money(r.recovered)}.` : r.msg);
-          refresh(S); saveGame(S); render();
+          refresh(S); persist(); render();
         },
       });
     };
@@ -761,13 +814,13 @@ function bindView() {
   v.querySelectorAll('[data-loan]').forEach((b) => { b.onclick = () => showLoan(b.dataset.loan); });
   v.querySelectorAll('[data-repay]').forEach((b) => { b.onclick = () => showRepay(b.dataset.repay); });
   v.querySelectorAll('[data-hire]').forEach((b) => {
-    b.onclick = () => { const p = hire(S, b.dataset.hire); say(`${p.name} hired at ${money(p.salary)} a month.`); refresh(S); saveGame(S); render(); };
+    b.onclick = () => { const p = hire(S, b.dataset.hire); say(`${p.name} hired at ${money(p.salary)} a month.`); refresh(S); persist(); render(); };
   });
   v.querySelectorAll('[data-fire]').forEach((b) => {
-    b.onclick = () => { fire(S, b.dataset.fire); refresh(S); saveGame(S); render(); };
+    b.onclick = () => { fire(S, b.dataset.fire); refresh(S); persist(); render(); };
   });
   v.querySelectorAll('[data-ask]').forEach((r) => {
-    r.onchange = () => { setAsk(S, r.dataset.ask, (Number(r.value) / 100) * Number(r.dataset.mkt)); saveGame(S); render(); };
+    r.onchange = () => { setAsk(S, r.dataset.ask, (Number(r.value) / 100) * Number(r.dataset.mkt)); persist(); render(); };
   });
   const dg = $('#diagnose'); if (dg) dg.onclick = () => {
     const dupes = findDuplicateIds(S);
@@ -799,7 +852,7 @@ function bindView() {
     reseedIds(S);
     const repaired = repairDuplicateIds(S);
     S.idsRepaired = true;
-    refresh(S); saveGame(S);
+    refresh(S); persist();
     say(repaired.length
       ? `Repaired ${repaired.length} internal reference${repaired.length === 1 ? '' : 's'}. Try Build again.`
       : 'Nothing needed repairing in this save.');
@@ -871,7 +924,7 @@ function showEvent() {
       <div class="lab">${esc(ch.label)}</div>${ch.hint ? `<div class="hint">${esc(ch.hint)}</div>` : ''}</button>`).join('')}</div>
   </div>`, (rootEl) => {
     rootEl.querySelectorAll('[data-c]').forEach((b) => {
-      b.onclick = () => { resolveEvent(S, Number(b.dataset.c)); closeModal(); saveGame(S); render(); };
+      b.onclick = () => { resolveEvent(S, Number(b.dataset.c)); closeModal(); persist(); render(); };
     });
   });
 }
@@ -902,7 +955,7 @@ function doBroker(id) {
     onConfirm: () => {
       const r = brokerDeal(S, id);
       say(r.closed ? `Brokered. ${money(r.fee)} commission, no capital employed.` : 'The deal fell through. Five weeks, nothing to show for it.');
-      refresh(S); saveGame(S); render();
+      refresh(S); persist(); render();
     },
   });
 }
@@ -983,13 +1036,13 @@ function showDeal(id) {
         say(r.found.length
           ? `Investigation found: ${r.found.map((d) => DEFECTS[d].name).join(', ')}.`
           : `Nothing found, at ${pct(r.confidence, 0)} confidence. That is not the same as clean.`);
-        saveGame(S); closeModal(); showDeal(id);
+        persist(); closeModal(); showDeal(id);
       };
     });
     const nb = $('#negbtn', rootEl);
     if (nb) nb.onclick = () => {
       const r = negotiate(S, o, Number($('#neg', rootEl).value));
-      say(r.msg); saveGame(S); closeModal();
+      say(r.msg); persist(); closeModal();
       if (S.offers.find((x) => x.id === id)) showDeal(id); else render();
     };
     const bk = $('#brokerit', rootEl);
@@ -1001,7 +1054,7 @@ function showDeal(id) {
       else if (o.kind === 'asset') r = buyAssetOffer(S, o);
       else r = buyLand(S, o);
       if (!r.ok) return say(r.msg);
-      say('Registered.'); refresh(S); saveGame(S); closeModal(); tab = 'land'; render();
+      say('Registered.'); refresh(S); persist(); closeModal(); tab = 'land'; render();
     };
   });
 }
@@ -1165,7 +1218,7 @@ function showBuild(parcelId) {
     const launch = (mode) => {
       const r = launchProject(S, parcelId, $('#bt', rootEl).value, Number($('#bsf', rootEl).value), mode);
       if (!r.ok) return say(r.msg);
-      refresh(S); saveGame(S); closeModal(); tab = 'projects'; render();
+      refresh(S); persist(); closeModal(); tab = 'projects'; render();
     };
     $('#go-sell', rootEl).onclick = () => launch('sell');
     $('#go-hold', rootEl).onclick = () => launch('hold');
@@ -1208,7 +1261,7 @@ function showLoan(lenderId) {
       $('#decision', rootEl).innerHTML = `<div class="card tight" style="margin-top:14px">
         <div class="spread"><b>${r.ok ? 'Sanctioned' : 'Declined'}</b><span class="pill ${r.ok ? 'good' : 'warn'}">${r.ok ? money(d.amount) + ' at ' + pct(d.rate, 2) : 'No facility'}</span></div>
         <div class="small muted" style="margin-top:6px">${(d?.reasons || ['The proposal does not meet lending norms.']).map(esc).join(' ')}</div></div>`;
-      refresh(S); saveGame(S);
+      refresh(S); persist();
       if (r.ok) setTimeout(() => { closeModal(); render(); }, 2600);
     };
   });
@@ -1268,7 +1321,7 @@ function showLRD(assetId) {
       const r = takeLRD(S, assetId, Number($('#lamt', rootEl).value));
       if (!r.ok) return say(r.msg);
       say(`${money(r.amount)} drawn against the lease. The building is now charged.`);
-      refresh(S); saveGame(S); closeModal(); render();
+      refresh(S); persist(); closeModal(); render();
     };
   });
 }
@@ -1341,7 +1394,7 @@ function showRepay(loanId) {
       say(r.quote.full
         ? `${l.lender} closed. ${money(r.quote.interestSaved)} of interest avoided.${r.released.length ? ` Security released: ${r.released.join(', ')}.` : ''}`
         : `Prepaid ${money(r.quote.principal)}. Around ${money(r.quote.interestSaved)} of interest avoided.`);
-      refresh(S); saveGame(S); closeModal(); render();
+      refresh(S); persist(); closeModal(); render();
     };
   });
 }
@@ -1412,15 +1465,21 @@ function showEnding() {
   </div>`, (rootEl) => {
     const co = $('#carryon', rootEl);
     if (co) co.onclick = () => {
+      endingDismissed = false;
       continuePast2020(S);
-      saveGame(S);
+      persist();
       closeModal();
       say(`The clock runs again. You have until ${onward.label}.`);
       tab = 'dashboard';
       render();
     };
-    $('#close', rootEl).onclick = () => { closeModal(); tab = 'books'; render(); };
-    $('#again', rootEl).onclick = () => { clearSave(); S = null; closeModal(); renderStart(); };
+    $('#close', rootEl).onclick = () => {
+      // "Look through the books" used to close the ending, re-render, and have the render
+      // reopen the ending before the player saw anything. It could not be dismissed.
+      endingDismissed = true;
+      closeModal(); tab = 'books'; render();
+    };
+    $('#again', rootEl).onclick = () => { clearSave(); S = null; endingDismissed = false; closeModal(); renderStart(); };
   });
 }
 

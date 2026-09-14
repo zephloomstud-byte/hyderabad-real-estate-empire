@@ -1696,11 +1696,22 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     return principal * r * f / (f - 1);
   }
   function saveGame(s) {
+    let json;
     try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify(s));
-      return true;
+      json = JSON.stringify(s);
     } catch (e) {
-      return false;
+      return { ok: false, bytes: 0, error: "The game state could not be serialised: " + e.message };
+    }
+    try {
+      localStorage.setItem(SAVE_KEY, json);
+      return { ok: true, bytes: json.length };
+    } catch (e) {
+      const quota = /quota|exceeded/i.test(String(e && e.name + " " + e.message));
+      return {
+        ok: false,
+        bytes: json.length,
+        error: quota ? `The save is ${Math.round(json.length / 1024)} KB and the browser has run out of room for it.` : "The browser refused to save: " + (e && e.message)
+      };
     }
   }
   function loadGame() {
@@ -1797,6 +1808,37 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
       }
     }
     return dupes;
+  }
+  var KEEP = { news: 400, ledger: 600, doneProjects: 40 };
+  function compactState(s) {
+    const before = {
+      news: (s.news || []).length,
+      ledger: (s.ledger || []).length,
+      projects: (s.projects || []).length,
+      parcels: (s.parcels || []).length
+    };
+    if (s.news && s.news.length > KEEP.news) s.news = s.news.slice(-KEEP.news);
+    if (s.ledger && s.ledger.length > KEEP.ledger) s.ledger = s.ledger.slice(-KEEP.ledger);
+    if (Array.isArray(s.projects)) {
+      const live = s.projects.filter((p) => !p.done);
+      const done = s.projects.filter((p) => p.done).slice(-KEEP.doneProjects);
+      s.projects = [...done, ...live];
+    }
+    if (Array.isArray(s.parcels)) {
+      const referenced = /* @__PURE__ */ new Set();
+      for (const p of s.projects || []) if (!p.done && p.parcelId) referenced.add(p.parcelId);
+      for (const j of s.jvs || []) if (j.parcelId) referenced.add(j.parcelId);
+      for (const l of s.loans || []) for (const c of l.collateral || []) referenced.add(c);
+      for (const r of s.regularisations || []) if (r.kind === "parcel") referenced.add(r.id);
+      s.parcels = s.parcels.filter((p) => !p.consumed || referenced.has(p.id) || p.owned === false && referenced.has(p.id));
+      s.parcels = s.parcels.filter((p) => p.owned !== false || referenced.has(p.id));
+    }
+    return {
+      news: before.news - s.news.length,
+      ledger: before.ledger - s.ledger.length,
+      projects: before.projects - s.projects.length,
+      parcels: before.parcels - s.parcels.length
+    };
   }
 
   // src/data/costs.js
@@ -5234,9 +5276,10 @@ A proper refurbishment is about ${money(cost)}.`,
     refresh(s);
     return s;
   }
+  var idsChecked = /* @__PURE__ */ new WeakSet();
   function refresh(s) {
     if (!s.intel) s.intel = initialIntel();
-    if (!s.seq || findDuplicateIds(s).length) {
+    if (!s.seq || !idsChecked.has(s) && findDuplicateIds(s).length) {
       reseedIds(s);
       const repaired = repairDuplicateIds(s);
       s.idsRepaired = true;
@@ -5249,6 +5292,7 @@ A proper refurbishment is about ${money(cost)}.`,
         });
       }
     }
+    idsChecked.add(s);
     s.macro = macroAt(s.month);
     if (s.demandOverride) s.macro.demand *= s.demandOverride;
     s.macro.demand *= clamp(s.bizConfidence, 0.7, 1.3);
@@ -6595,7 +6639,10 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
     }
     saveRng(s, rng);
     refresh(s);
-    if (s.month % 12 === 0) closeYear(s, s.bs);
+    if (s.month % 12 === 0) {
+      closeYear(s, s.bs);
+      compactState(s);
+    }
     checkEnd(s);
     return s;
   }
@@ -6740,7 +6787,7 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
   }
 
   // src/ui/app.js
-  var BUILD_ID = "b53dafea73".startsWith("__") ? "source" : "b53dafea73";
+  var BUILD_ID = "36614b27cb".startsWith("__") ? "source" : "36614b27cb";
   var $ = (sel, root = document) => root.querySelector(sel);
   var app = $("#app");
   var modalRoot = $("#modal-root");
@@ -6748,13 +6795,28 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
   var tab = "dashboard";
   var modal = null;
   var toast = null;
+  var advancing = false;
+  var endingDismissed = false;
   var esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   function boot() {
     const saved = loadGame();
     if (saved) {
+      delete saved._idsChecked;
+      compactState(saved);
       S = refresh(saved);
+      persist();
       render();
     } else renderStart();
+  }
+  var lastSaveWarning = 0;
+  function persist() {
+    if (!S) return;
+    const r = saveGame(S);
+    if (!r.ok && Date.now() - lastSaveWarning > 15e3) {
+      lastSaveWarning = Date.now();
+      say(`Your game did not save. ${r.error} Use Books \u2192 Export save to keep a copy before you close this tab.`);
+    }
+    return r;
   }
   function renderStart() {
     app.innerHTML = `
@@ -6803,7 +6865,7 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
         firmName: $("#f-firm").value.trim() || null
       });
       tab = "deals";
-      saveGame(S);
+      persist();
       render();
     };
   }
@@ -6829,10 +6891,10 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
         ${stat("Reputation", Math.round(S.reputation) + " / 100")}
         ${stat("PLR", S.macro.plr.toFixed(2) + "%")}
       </div>
-      <button class="advance" id="adv" ${S.over || S.pendingEvent ? "disabled" : ""}>
-        ${S.over ? "Simulation ended" : "Advance one month"}
-        <small>${S.over ? "" : dateLabel(S.month + 1)}</small>
-      </button>
+      ${S.over ? `<button class="advance" id="reopen-ending">Simulation ended<small>Show the result</small></button>` : `<button class="advance" id="adv" ${S.pendingEvent || advancing ? "disabled" : ""}>
+        ${advancing ? "Working\u2026" : "Advance one month"}
+        <small>${dateLabel(S.month + 1)}</small>
+      </button>`}
     </div>
     <nav class="tabs">
       ${tabBtn("dashboard", "Dashboard")}
@@ -6849,12 +6911,34 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
     <main id="view">${renderTab()}</main>
     ${toast ? `<div style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:3px;z-index:90;max-width:560px;box-shadow:var(--shadow)">${esc(toast)}</div>` : ""}
   `;
-    $("#adv").onclick = () => {
-      advanceMonth(S);
-      saveGame(S);
-      if (S.pendingEvent) showEvent();
-      else if (S.over) showEnding();
-      render();
+    const reopen = $("#reopen-ending");
+    if (reopen) reopen.onclick = () => {
+      endingDismissed = false;
+      showEnding();
+    };
+    const advBtn = $("#adv");
+    if (advBtn) advBtn.onclick = () => {
+      if (advancing) return;
+      advancing = true;
+      const btn = $("#adv");
+      if (btn) {
+        btn.disabled = true;
+        btn.firstChild.textContent = "Working\u2026";
+      }
+      setTimeout(() => {
+        try {
+          advanceMonth(S);
+          persist();
+        } catch (err) {
+          console.error("advance failed", err);
+          say("Something went wrong working out that month. Your save is intact \u2014 reload the page and try again.");
+        } finally {
+          advancing = false;
+        }
+        if (S.pendingEvent) showEvent();
+        else if (S.over) showEnding();
+        render();
+      }, 0);
     };
     app.querySelectorAll(".tab").forEach((b) => {
       b.onclick = () => {
@@ -6864,7 +6948,7 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
     });
     bindView();
     if (S.pendingEvent && !modal) showEvent();
-    if (S.over && !modal) showEnding();
+    if (S.over && !modal && !endingDismissed) showEnding();
   }
   function renderTab() {
     try {
@@ -7364,7 +7448,7 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
         const r = askBrokers(S, b.dataset.brief);
         say(r.ok ? `Word is out. ${r.found.length} parcel${r.found.length === 1 ? "" : "s"} on the desk: ${r.found.join("; ")}` : r.msg);
         refresh(S);
-        saveGame(S);
+        persist();
         render();
       };
     });
@@ -7376,7 +7460,7 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
         const r = sellParcel(S, b.dataset.sellland);
         say(r.ok ? `Sold for ${money(r.net)} \u2014 a ${r.gain >= 0 ? "gain" : "loss"} of ${money(Math.abs(r.gain))}.` : r.msg);
         refresh(S);
-        saveGame(S);
+        persist();
         render();
       };
     });
@@ -7386,7 +7470,7 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
         const r = commissionSurvey(S, id);
         say(r.ok ? `Survey commissioned. ${money(r.cost)}. Real numbers, good for about two years.` : r.msg);
         refresh(S);
-        saveGame(S);
+        persist();
         render();
       };
     });
@@ -7398,7 +7482,7 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
         const r = sellAsset(S, b.dataset.sellasset);
         say(r.ok ? `Sold for ${money(r.net)}.` : r.msg);
         refresh(S);
-        saveGame(S);
+        persist();
         render();
       };
     });
@@ -7419,7 +7503,7 @@ The money goes now either way. It is not refunded if the application fails.`,
             const r = applyForRegularisation(S, kind, id);
             say(r.ok ? `Application filed. ${q.months} months for an answer.` : r.msg);
             refresh(S);
-            saveGame(S);
+            persist();
             render();
           }
         });
@@ -7438,7 +7522,7 @@ The money goes now either way. It is not refunded if the application fails.`,
             const r = abandonProject(S, b.dataset.abandon);
             say(r.ok ? `Site sold on. Recovered ${money(r.recovered)}.` : r.msg);
             refresh(S);
-            saveGame(S);
+            persist();
             render();
           }
         });
@@ -7455,7 +7539,7 @@ The money goes now either way. It is not refunded if the application fails.`,
         const p = hire(S, b.dataset.hire);
         say(`${p.name} hired at ${money(p.salary)} a month.`);
         refresh(S);
-        saveGame(S);
+        persist();
         render();
       };
     });
@@ -7463,14 +7547,14 @@ The money goes now either way. It is not refunded if the application fails.`,
       b.onclick = () => {
         fire(S, b.dataset.fire);
         refresh(S);
-        saveGame(S);
+        persist();
         render();
       };
     });
     v.querySelectorAll("[data-ask]").forEach((r) => {
       r.onchange = () => {
         setAsk(S, r.dataset.ask, Number(r.value) / 100 * Number(r.dataset.mkt));
-        saveGame(S);
+        persist();
         render();
       };
     });
@@ -7501,7 +7585,7 @@ The money goes now either way. It is not refunded if the application fails.`,
       const repaired = repairDuplicateIds(S);
       S.idsRepaired = true;
       refresh(S);
-      saveGame(S);
+      persist();
       say(repaired.length ? `Repaired ${repaired.length} internal reference${repaired.length === 1 ? "" : "s"}. Try Build again.` : "Nothing needed repairing in this save.");
       render();
     };
@@ -7589,7 +7673,7 @@ The money goes now either way. It is not refunded if the application fails.`,
         b.onclick = () => {
           resolveEvent(S, Number(b.dataset.c));
           closeModal();
-          saveGame(S);
+          persist();
           render();
         };
       });
@@ -7619,7 +7703,7 @@ Not every introduction closes. Yours close more often the better you know the ma
         const r = brokerDeal(S, id);
         say(r.closed ? `Brokered. ${money(r.fee)} commission, no capital employed.` : "The deal fell through. Five weeks, nothing to show for it.");
         refresh(S);
-        saveGame(S);
+        persist();
         render();
       }
     });
@@ -7689,7 +7773,7 @@ Not every introduction closes. Yours close more often the better you know the ma
           const r = doDueDiligence(S, o, b.dataset.dd);
           if (!r.ok) return say(r.msg);
           say(r.found.length ? `Investigation found: ${r.found.map((d) => DEFECTS[d].name).join(", ")}.` : `Nothing found, at ${pct(r.confidence, 0)} confidence. That is not the same as clean.`);
-          saveGame(S);
+          persist();
           closeModal();
           showDeal(id);
         };
@@ -7698,7 +7782,7 @@ Not every introduction closes. Yours close more often the better you know the ma
       if (nb) nb.onclick = () => {
         const r = negotiate(S, o, Number($("#neg", rootEl).value));
         say(r.msg);
-        saveGame(S);
+        persist();
         closeModal();
         if (S.offers.find((x) => x.id === id)) showDeal(id);
         else render();
@@ -7720,7 +7804,7 @@ Not every introduction closes. Yours close more often the better you know the ma
         if (!r.ok) return say(r.msg);
         say("Registered.");
         refresh(S);
-        saveGame(S);
+        persist();
         closeModal();
         tab = "land";
         render();
@@ -7883,7 +7967,7 @@ Not every introduction closes. Yours close more often the better you know the ma
         const r = launchProject(S, parcelId, $("#bt", rootEl).value, Number($("#bsf", rootEl).value), mode);
         if (!r.ok) return say(r.msg);
         refresh(S);
-        saveGame(S);
+        persist();
         closeModal();
         tab = "projects";
         render();
@@ -7931,7 +8015,7 @@ Not every introduction closes. Yours close more often the better you know the ma
         <div class="spread"><b>${r.ok ? "Sanctioned" : "Declined"}</b><span class="pill ${r.ok ? "good" : "warn"}">${r.ok ? money(d.amount) + " at " + pct(d.rate, 2) : "No facility"}</span></div>
         <div class="small muted" style="margin-top:6px">${(d?.reasons || ["The proposal does not meet lending norms."]).map(esc).join(" ")}</div></div>`;
         refresh(S);
-        saveGame(S);
+        persist();
         if (r.ok) setTimeout(() => {
           closeModal();
           render();
@@ -8000,7 +8084,7 @@ Not every introduction closes. Yours close more often the better you know the ma
         if (!r.ok) return say(r.msg);
         say(`${money(r.amount)} drawn against the lease. The building is now charged.`);
         refresh(S);
-        saveGame(S);
+        persist();
         closeModal();
         render();
       };
@@ -8074,7 +8158,7 @@ Not every introduction closes. Yours close more often the better you know the ma
         if (!r.ok) return say(r.msg);
         say(r.quote.full ? `${l.lender} closed. ${money(r.quote.interestSaved)} of interest avoided.${r.released.length ? ` Security released: ${r.released.join(", ")}.` : ""}` : `Prepaid ${money(r.quote.principal)}. Around ${money(r.quote.interestSaved)} of interest avoided.`);
         refresh(S);
-        saveGame(S);
+        persist();
         closeModal();
         render();
       };
@@ -8145,14 +8229,16 @@ Not every introduction closes. Yours close more often the better you know the ma
   </div>`, (rootEl) => {
       const co = $("#carryon", rootEl);
       if (co) co.onclick = () => {
+        endingDismissed = false;
         continuePast2020(S);
-        saveGame(S);
+        persist();
         closeModal();
         say(`The clock runs again. You have until ${onward.label}.`);
         tab = "dashboard";
         render();
       };
       $("#close", rootEl).onclick = () => {
+        endingDismissed = true;
         closeModal();
         tab = "books";
         render();
@@ -8160,6 +8246,7 @@ Not every introduction closes. Yours close more often the better you know the ma
       $("#again", rootEl).onclick = () => {
         clearSave();
         S = null;
+        endingDismissed = false;
         closeModal();
         renderStart();
       };

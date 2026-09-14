@@ -52,7 +52,9 @@ const stamped = { seq: { PL: 1 }, idsRepaired: true,
   projects: [], assets: [], loans: [], staff: [], offers: [], jvs: [], news: [], month: 0 };
 const g2 = startGame('stamped', { cash: 1e6 });
 Object.assign(g2, { parcels: stamped.parcels, seq: stamped.seq, idsRepaired: true });
-refresh(g2);
-check('a save falsely stamped as repaired is still repaired', findDuplicateIds(g2), []);
+// Round-trip through JSON, because that is how a damaged save actually arrives.
+const reloaded = JSON.parse(JSON.stringify(g2));
+refresh(reloaded);
+check('a save falsely stamped as repaired is still repaired', findDuplicateIds(reloaded), []);
 console.log(failed ? `\n${failed} test(s) failed.` : '\nAll identifier tests pass.');
 process.exit(failed ? 1 : 0);

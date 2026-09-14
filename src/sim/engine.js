@@ -8,7 +8,7 @@ import { TIMELINE_FULL as TIMELINE, regimeAt } from '../data/history.js';
 import { BY_ID, DEFECTS } from '../data/geo.js';
 import { BUILD_TYPES, LAYOUT_TYPES, ROLES, LENDERS } from '../data/costs.js';
 import { EVENTS } from '../data/events.js';
-import { COMPETITORS, FIRST_NAMES, SURNAMES, newGame, nextId, reseedIds, findDuplicateIds, repairDuplicateIds } from './state.js';
+import { COMPETITORS, FIRST_NAMES, SURNAMES, newGame, nextId, reseedIds, findDuplicateIds, repairDuplicateIds, compactState } from './state.js';
 import { LOCALITIES } from '../data/geo.js';
 import {
   macroAt, landRate, rentRate, salePrice, capRate, costIndex, dutyRate, salaryIndex,
@@ -51,6 +51,14 @@ export function startGame(seedText, opts = {}) {
 
 // ------------------------------------------------------------------ derived state
 
+/**
+ * States already scanned for duplicate ids this session. A WeakSet rather than a flag on
+ * the save: a flag gets serialised, survives a reload, and suppresses the very check a
+ * freshly loaded save needs. Identity is exactly right here — a save parsed from storage
+ * is a new object and is always checked once; one already in play never is again.
+ */
+const idsChecked = new WeakSet();
+
 export function refresh(s) {
   if (!s.intel) s.intel = initialIntel();
   // Saves written before ids were persisted carry colliding identifiers. Lift the
@@ -60,7 +68,7 @@ export function refresh(s) {
   // as repaired while its repair silently did nothing, so any save carrying that stamp
   // would have been skipped forever by the version that actually worked. Detecting
   // duplicates directly is cheap, idempotent, and cannot be defeated by a stale flag.
-  if (!s.seq || findDuplicateIds(s).length) {
+  if (!s.seq || (!idsChecked.has(s) && findDuplicateIds(s).length)) {
     reseedIds(s);
     const repaired = repairDuplicateIds(s);
     s.idsRepaired = true;
@@ -73,6 +81,7 @@ export function refresh(s) {
       });
     }
   }
+  idsChecked.add(s);
   s.macro = macroAt(s.month);
   if (s.demandOverride) s.macro.demand *= s.demandOverride;
   s.macro.demand *= clamp(s.bizConfidence, 0.7, 1.3);
@@ -1302,8 +1311,11 @@ export function advanceMonth(s) {
   saveRng(s, rng);
   refresh(s);
 
-  // 11. Year close.
-  if (s.month % 12 === 0) closeYear(s, s.bs);
+  // 11. Year close, and shed history the rules no longer read.
+  if (s.month % 12 === 0) {
+    closeYear(s, s.bs);
+    compactState(s);
+  }
 
   // 12. Endings.
   checkEnd(s);
@@ -1347,6 +1359,7 @@ function checkEnd(s) {
 // ------------------------------------------------------------------ re-exports for UI
 
 export {
+  compactState,
   END_MONTH, EXTENDED_END_MONTH, horizonOf, nextHorizon, HORIZONS,
   findDuplicateIds, repairDuplicateIds, reseedIds,
   abandonProject, remainingCommitments, fundingSchedule, freeSqYd, landConsumedBy,
