@@ -123,6 +123,7 @@ export function newGame(seedText = String(Date.now()), opts = {}) {
     eventCooldown: {},
 
     flags: {},
+    listed: false, reitListed: false, founderStake: 1,
     intel: initialIntel(),
     stats: { projectsDone: 0, unitsSold: 0, sqftBuilt: 0, landBoughtSqYd: 0, defectsHit: 0, bribesTaken: 0 },
     soldUnits: 0,

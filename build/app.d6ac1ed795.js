@@ -1371,6 +1371,9 @@
       pendingEvent: null,
       eventCooldown: {},
       flags: {},
+      listed: false,
+      reitListed: false,
+      founderStake: 1,
       intel: initialIntel(),
       stats: { projectsDone: 0, unitsSold: 0, sqftBuilt: 0, landBoughtSqYd: 0, defectsHit: 0, bribesTaken: 0 },
       soldUnits: 0,
@@ -4031,8 +4034,11 @@ A proper refurbishment is about ${money(cost)}.`,
     const rate = landRate(loc.id, m, s);
     const isAgri = loc.tags.includes("agri") || loc.tags.includes("far");
     let areaSqYd;
-    if (isAgri) areaSqYd = Math.round(SQYD_PER_ACRE * rng.range(1, opts.big ? 24 : 6));
+    const bigLeague = opts.township || s.stats.projectsDone >= 6 && s.netWorth > 5e8 && s.reputation > 40;
+    if (isAgri && bigLeague) areaSqYd = Math.round(SQYD_PER_ACRE * rng.range(12, opts.township ? 420 : 140));
+    else if (isAgri) areaSqYd = Math.round(SQYD_PER_ACRE * rng.range(1, opts.big ? 24 : 6));
     else if (loc.zone === "core") areaSqYd = Math.round(rng.range(200, opts.big ? 3e3 : 900) / 10) * 10;
+    else if (bigLeague) areaSqYd = Math.round(rng.range(2e3, 16e4) / 10) * 10;
     else areaSqYd = Math.round(rng.range(300, opts.big ? 12e3 : 2400) / 10) * 10;
     const motive = rng.weighted([
       ["partition", 3],
@@ -4073,11 +4079,23 @@ A proper refurbishment is about ${money(cost)}.`,
     };
   }
   function makeDevAgreement(m, s, rng) {
-    const pool = localitiesAt(m).filter((l) => ["core", "northwest", "east"].includes(l.zone));
+    const standing = clamp(s.stats.projectsDone / 14, 0, 1) * 0.55 + clamp(s.reputation / 85, 0, 1) * 0.45;
+    const zones = standing > 0.45 ? null : ["core", "northwest", "east"];
+    const pool = localitiesAt(m).filter((l) => !zones || zones.includes(l.zone));
+    if (!pool.length) return null;
     const loc = rng.pick(pool);
-    const areaSqYd = Math.round(rng.range(400, 2200) / 10) * 10;
-    const ownerShare = rng.range(0.32, 0.48);
+    const isAgri = loc.tags.includes("agri") || loc.tags.includes("far");
+    const reach = standing * standing;
+    const areaSqYd = isAgri ? Math.round(SQYD_PER_ACRE * rng.range(1.5, 3 + reach * 95)) : Math.round(rng.range(400, 1800 + reach * 44e3) / 10) * 10;
+    const ownerShare = clamp(
+      rng.range(0.34, 0.5) - standing * 0.15 - (s.flags.cleanBooks ? 0.015 : 0),
+      0.26,
+      0.52
+    );
     const defects = rollDefects(loc, rng, 0.1);
+    const advance = Math.round(
+      landRate(loc.id, m, s) * areaSqYd * rng.range(0.02, 0.08) / 1e3
+    ) * 1e3;
     return {
       id: nextId(s, "O"),
       kind: "devagreement",
@@ -4093,8 +4111,8 @@ A proper refurbishment is about ${money(cost)}.`,
       known: [],
       ddDone: 0,
       ddSpend: 0,
-      advance: Math.round(landRate(loc.id, m, s) * areaSqYd * rng.range(0.04, 0.14) / 1e3) * 1e3,
-      label: `Development agreement, ${areaSqYd} sq yd at ${loc.name}`,
+      advance,
+      label: `Development agreement, ${areaSqYd >= SQYD_PER_ACRE ? (areaSqYd / SQYD_PER_ACRE).toFixed(2) + " acres" : areaSqYd + " sq yd"} at ${loc.name}`,
       desc: loc.desc
     };
   }
@@ -4993,6 +5011,76 @@ A proper refurbishment is about ${money(cost)}.`,
     return 0.27;
   }
 
+  // src/sim/listing.js
+  var IPO_FROM_MONTH = 138;
+  var REIT_FROM_MONTH = 289;
+  function marketMultiple(s) {
+    const demand = s.macro.demand;
+    const credit = s.macro.credit;
+    const base = clamp(0.55 + demand * 1.35 + (credit - 0.6) * 0.9, 0.5, 4.2);
+    const quality = 1 + clamp(s.reputation, 0, 100) / 330 + (s.flags.cleanBooks ? 0.12 : -0.15) + (s.flags.internalAudit ? 0.06 : 0) + (s.staff.some((x) => x.role === "cfo") ? 0.07 : 0) + clamp(s.ratios.noi * 8 / Math.max(1, s.netWorth), 0, 0.35) - (s.flags.underInvestigation ? 0.35 : 0) - (s.flags.npa ? 0.2 : 0) - clamp((s.ratios.debtToAssets - 0.45) * 0.8, 0, 0.35);
+    return clamp(base * quality, 0.35, 5.5);
+  }
+  function ipoReadiness(s) {
+    const reasons = [];
+    if (s.month < IPO_FROM_MONTH) reasons.push("No Indian developer has listed yet. The market for this does not exist.");
+    if (s.listed) reasons.push("The company is already listed.");
+    if (s.stats.projectsDone < 8) reasons.push(`Underwriters want a delivery record. ${s.stats.projectsDone} of 8 projects completed.`);
+    if (s.netWorth < 3e9) reasons.push(`Net assets of ${Math.round(s.netWorth / 1e7)} crore are below the 300 crore a main-board listing needs.`);
+    if (!s.flags.cleanBooks) reasons.push("Accounts must be audited and cheque-based. No merchant banker will take these books to the market.");
+    if (s.reputation < 45) reasons.push(`Market standing of ${Math.round(s.reputation)} is too low; the issue would not be subscribed.`);
+    if (s.ratios.debtToAssets > 0.6) reasons.push(`Leverage at ${Math.round(s.ratios.debtToAssets * 100)}% of assets would have to come down first.`);
+    if (s.flags.underInvestigation) reasons.push("An open corruption case makes a public offering impossible.");
+    if (s.macro.credit < 0.4) reasons.push("The issue window is shut. Nothing is listing in this market.");
+    return { ready: reasons.length === 0, reasons };
+  }
+  function ipoQuote(s, dilution = 0.25) {
+    const mult = marketMultiple(s);
+    const preMoney = Math.max(0, s.netWorth) * mult;
+    const d = clamp(dilution, 0.1, 0.4);
+    const raised = preMoney * (d / (1 - d));
+    const postMoney = preMoney + raised;
+    const costs = raised * 0.06;
+    return {
+      multiple: mult,
+      preMoney,
+      raised,
+      postMoney,
+      dilution: d,
+      costs,
+      founderStake: (1 - d) * (s.founderStake ?? 1),
+      founderValue: postMoney * (1 - d) * (s.founderStake ?? 1)
+    };
+  }
+  function marketCap(s) {
+    if (!s.listed) return 0;
+    return Math.max(0, s.netWorth) * marketMultiple(s);
+  }
+  function founderWealth(s) {
+    if (!s.listed) return Math.max(0, s.netWorth) * (s.founderStake ?? 1);
+    return marketCap(s) * (s.founderStake ?? 1);
+  }
+  function reitReadiness(s) {
+    const reasons = [];
+    const leased2 = s.assets.filter((a) => a.use !== "res" && a.occupancy > 0.7);
+    const area = leased2.reduce((t, a) => t + a.sqFt, 0);
+    const noi = leased2.reduce((t, a) => t + (a.lastNoi || 0) * 12, 0);
+    if (s.month < REIT_FROM_MONTH) reasons.push("There is no REIT regime in India yet.");
+    if (s.reitListed) reasons.push("Your rental portfolio is already in a listed trust.");
+    if (area < 2e6) reasons.push(`A REIT needs scale: ${(area / 1e6).toFixed(2)} million sq ft of let commercial space against the 2 million required.`);
+    if (noi < 15e7) reasons.push("Net operating income is too thin to support a public trust.");
+    if (!s.flags.cleanBooks) reasons.push("A trust requires audited accounts and clean title on every asset.");
+    return { ready: reasons.length === 0, reasons, leased: leased2, area, noi };
+  }
+  function reitQuote(s) {
+    const r = reitReadiness(s);
+    const yieldReq = clamp(0.075 - (s.macro.demand - 1) * 0.012, 0.055, 0.095);
+    const grossValue = r.noi / yieldReq;
+    const sponsorStake = 0.25;
+    const raised = grossValue * (1 - sponsorStake);
+    return { ...r, yieldReq, grossValue, sponsorStake, raised, costs: raised * 0.04 };
+  }
+
   // src/sim/engine.js
   function startGame(seedText, opts = {}) {
     const s = newGame(seedText, opts);
@@ -5032,6 +5120,8 @@ A proper refurbishment is about ${money(cost)}.`,
     s.debt = bs.debt;
     s.assetValue = bs.assets;
     s.ratios = computeRatios(s, bs);
+    s.marketCap = marketCap(s);
+    s.founderWealth = founderWealth(s);
     s.avgQuality = s.projects.length || s.assets.length ? [...s.projects, ...s.assets].reduce((t, x) => t + (x.quality || 0.65), 0) / (s.projects.length + s.assets.length) : 0.65;
     return s;
   }
@@ -5290,6 +5380,21 @@ A proper refurbishment is about ${money(cost)}.`,
     });
     return { ok: true, closed: true, fee };
   }
+  function equityRequirement(s) {
+    const track = clamp(s.stats.projectsDone / 30, 0, 1);
+    const standing = clamp(s.reputation / 100, 0, 1);
+    const banked = clamp(s.relations.banks / 100, 0, 1);
+    const organisation = clamp(s.staff.length / 12, 0, 1);
+    const recurring = clamp(s.ratios.noi * 6 / Math.max(1, remainingCommitments(s) || 1), 0, 1);
+    const capability = clamp(
+      track * 0.32 + standing * 0.18 + banked * 0.16 + organisation * 0.12 + recurring * 0.14 + (s.flags.cleanBooks ? 0.06 : 0) + (s.listed ? 0.1 : 0),
+      0,
+      1
+    );
+    const cycle = clamp((0.6 - s.macro.credit) * 0.14, -0.04, 0.07) * capability;
+    const trouble = (s.flags.npa ? 0.06 : 0) + (s.flags.underInvestigation ? 0.05 : 0);
+    return clamp(0.32 - capability * 0.21 + cycle + trouble, 0.11, 0.36);
+  }
   function launchProject(s, parcelId, typeId, sqFt, mode, name) {
     const parcel = s.parcels.find((p2) => p2.id === parcelId);
     if (!parcel || parcel.consumed || freeSqYd(parcel) < 100) return { ok: false, msg: "There is no land left on that parcel." };
@@ -5310,11 +5415,12 @@ A proper refurbishment is about ${money(cost)}.`,
     }
     const est = estimateProject(parcel, typeId, sqFt, s);
     const committed = remainingCommitments(s);
-    const need = (committed + est.schedule.peak) * 0.32;
+    const share = equityRequirement(s);
+    const need = (committed + est.schedule.peak) * share;
     if (s.cash < need) {
       return {
         ok: false,
-        msg: `You cannot fund this. Total build cost ${money(est.budget)} over ${est.approvalMonths + est.months} months` + (committed > 0 ? `, on top of ${money(committed)} still to spend on projects already running` : "") + `. You should have roughly a third of that in hand \u2014 about ${money(need)} \u2014 and you have ${money(s.cash)}. Build smaller, sell something, or raise money first.`
+        msg: `You cannot fund this. Total build cost ${money(est.budget)} over ${est.approvalMonths + est.months} months` + (committed > 0 ? `, on top of ${money(committed)} still to spend on projects already running` : "") + `. A firm of your standing should have about ${Math.round(share * 100)} per cent of that in hand \u2014 ${money(need)} \u2014 and you have ${money(s.cash)}. Build smaller, sell something, or raise money first.`
       };
     }
     const p = startProject(s, parcel, typeId, sqFt, mode, name);
@@ -5377,6 +5483,64 @@ A proper refurbishment is about ${money(cost)}.`,
     });
     refresh(s);
     return { ok: true, horizon: next };
+  }
+  function goPublic(s, dilution = 0.25) {
+    const r = ipoReadiness(s);
+    if (!r.ready) return { ok: false, msg: r.reasons[0], reasons: r.reasons };
+    const q = ipoQuote(s, dilution);
+    s.listed = true;
+    s.listedAt = s.month;
+    s.founderStake = (s.founderStake ?? 1) * (1 - q.dilution);
+    s.cash += q.raised - q.costs;
+    s.equityPaidIn += q.raised - q.costs;
+    s.flags.cleanBooks = true;
+    s.flags.listedCompany = true;
+    s.relations.investors = clamp(s.relations.investors + 25, 0, 100);
+    s.relations.banks = clamp(s.relations.banks + 15, 0, 100);
+    s.relations.journalists = clamp(s.relations.journalists + 12, 0, 100);
+    s.reputation = clamp(s.reputation + 8, 0, 100);
+    if (!s.staff.some((x) => x.role === "cfo")) hire(s, "cfo");
+    s.ledger.push({ m: s.month, type: "Initial public offering", amount: Math.round(q.raised - q.costs), note: `${Math.round(q.dilution * 100)}% of the company` });
+    s.news.push({
+      m: s.month,
+      tag: "FINANCE",
+      major: true,
+      head: `${s.founder.firmName || "The company"} lists at a market value of ${money(q.postMoney)}`,
+      body: `${money(q.raised)} raised by issuing ${Math.round(q.dilution * 100)} per cent of the company, ${money(q.costs)} of it eaten by bankers and lawyers. The market has put ${q.multiple.toFixed(2)} times net assets on the business \u2014 it pays for delivery, for recurring income and for accounts it believes, and it will stop paying for any of them the moment the cycle turns. Your ${Math.round(s.founderStake * 100)} per cent is worth ${money(q.founderValue)} on paper today.
+
+You now answer to a board, to quarterly results and to anyone who buys a hundred shares. The firm cannot quietly stop and wait out a bad year any more.`
+    });
+    return { ok: true, quote: q };
+  }
+  function launchREIT(s) {
+    const q = reitQuote(s);
+    if (!q.ready) return { ok: false, msg: q.reasons[0], reasons: q.reasons };
+    const ids = new Set(q.leased.map((a) => a.id));
+    for (const l of s.loans) if (l.assetId && ids.has(l.assetId)) l.outstanding = Math.max(0, l.outstanding);
+    let repaid = 0;
+    for (const l of [...s.loans]) {
+      if (l.assetId && ids.has(l.assetId)) {
+        repaid += l.outstanding;
+        s.loans = s.loans.filter((x) => x.id !== l.id);
+      }
+    }
+    s.assets = s.assets.filter((a) => !ids.has(a.id));
+    const net = q.raised - q.costs - repaid;
+    s.cash += net;
+    s.reitListed = true;
+    s.reitStake = q.sponsorStake;
+    s.reitValue = q.grossValue * q.sponsorStake;
+    s.relations.investors = clamp(s.relations.investors + 20, 0, 100);
+    s.reputation = clamp(s.reputation + 6, 0, 100);
+    s.ledger.push({ m: s.month, type: "REIT monetisation", amount: Math.round(net), note: `${(q.area / 1e6).toFixed(2)}m sq ft at a ${(q.yieldReq * 100).toFixed(1)}% yield` });
+    s.news.push({
+      m: s.month,
+      tag: "FINANCE",
+      major: true,
+      head: `Rental portfolio listed as a REIT at ${money(q.grossValue)}`,
+      body: `${(q.area / 1e6).toFixed(2)} million square feet producing ${money(q.noi)} a year, valued at a ${(q.yieldReq * 100).toFixed(1)} per cent yield \u2014 considerably finer than a private buyer would pay, because the units trade and the income is contracted. ${money(net)} released after repaying ${money(repaid)} of lease rental discounting and ${money(q.costs)} of issue costs. You keep a sponsor's ${Math.round(q.sponsorStake * 100)} per cent. Twenty-five years of building offices has just turned into capital you can deploy again.`
+    });
+    return { ok: true, quote: q, net, repaid };
   }
   function repayLoan(s, loanId, amount) {
     const loan = s.loans.find((l) => l.id === loanId);
@@ -6212,7 +6376,8 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
     while (s.offers.length < target && guard++ < 12) {
       const kind = rng.weighted([
         ["land", 6],
-        ["dev", s.month > 6 ? 2 : 0.5],
+        // Landowners seek out builders who deliver; this is reputation's real payoff.
+        ["dev", s.month > 6 ? 2 + clamp(s.reputation / 20, 0, 5) + clamp(s.stats.projectsDone / 4, 0, 3) : 0.5],
         ["asset", s.month > 36 && s.netWorth > 5e6 ? 1.6 : 0]
       ]);
       let o = null;
@@ -6358,6 +6523,9 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
     const relief = s.staff.filter((p) => ROLES[p.role]?.exec).length * 6 + (s.staff.length > 4 ? 3 : 0);
     s.stress = clamp(s.stress + load * 1.1 - relief - 2 + (s.cash < 0 ? 5 : 0), 0, 100);
     s.reputation = clamp(s.reputation + (s.stats.projectsDone > 0 ? 0.16 : 0.02) + (s.ratios.occupancy > 0.8 ? 0.08 : 0) - (s.flags.npa ? 0.25 : 0) - (s.payables > 0 ? 0.1 : 0), 0, 100);
+    const earned = clamp(Math.sqrt(s.stats.projectsDone) * 9, 0, 55);
+    const floor = s.flags.underInvestigation || s.flags.npa ? earned * 0.4 : earned;
+    if (s.reputation < floor) s.reputation = floor;
     tickRegularisations(s, rng);
     tickIntel(s, rng);
     refreshOffers(s, rng);
@@ -6517,7 +6685,7 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
   }
 
   // src/ui/app.js
-  var BUILD_ID = "36614b27cb".startsWith("__") ? "source" : "36614b27cb";
+  var BUILD_ID = "d6ac1ed795".startsWith("__") ? "source" : "d6ac1ed795";
   var $ = (sel, root = document) => root.querySelector(sel);
   var app = $("#app");
   var modalRoot = $("#modal-root");
@@ -6613,8 +6781,9 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
       </div>
       <div class="stats">
         ${stat("Cash", money(S.cash), S.cash < 0 ? "neg" : "")}
-        ${stat("Net worth", money(nw), nw < 0 ? "neg" : "")}
-        ${stat("In USD", usd(nw, S.macro.usd))}
+        ${stat(S.listed ? "Market cap" : "Net worth", money(S.listed ? marketCap(S) : nw), nw < 0 ? "neg" : "")}
+        ${stat(S.listed ? "Your stake" : "In USD", S.listed ? money(founderWealth(S)) : usd(nw, S.macro.usd))}
+        ${S.listed ? stat("Stake in USD", usd(founderWealth(S), S.macro.usd)) : ""}
         ${stat("Debt", money(S.debt))}
         ${stat("Debt / assets", pct(S.ratios.debtToAssets))}
         ${stat("Rental NOI", money(S.ratios.noi) + " p.a.")}
@@ -6987,6 +7156,8 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
     <div class="small muted" style="margin-top:8px">Idle cash earns nothing while these run against it, so clearing debt early is often the best use of surplus money. It is also the money you will not have when the next site needs paying for, and banks do not lend it back on demand.</div>
     </div>` : ""}
 
+    ${capitalMarketsCard()}
+
     <div class="card"><h3>Raise money</h3>
       <div class="grid g2">
       ${lenders.map((l) => {
@@ -7129,6 +7300,68 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
     if (p.regularising) return false;
     return (p.known || []).some((d) => REGULARISABLE_UI.includes(d) && !(p.resolved || []).includes(d));
   }
+  function capitalMarketsCard() {
+    const ipo = ipoReadiness(S);
+    const reit = reitReadiness(S);
+    if (S.listed && S.reitListed) return listedSummaryCard();
+    let ipoBody;
+    if (S.listed) {
+      ipoBody = listedSummaryCard(true);
+    } else if (ipo.ready) {
+      const q = ipoQuote(S);
+      ipoBody = `<div class="card tight">
+      <div class="spread"><b>Take the company public</b><span class="pill good">Ready</span></div>
+      <div class="small muted" style="margin:6px 0">${esc(IPO_BLURB)}</div>
+      ${row("Market would pay", q.multiple.toFixed(2) + "\xD7 net assets")}
+      ${row("Company valued at", money(q.postMoney))}
+      ${row("Raised for 25%", money(q.raised))}
+      ${row("Your stake afterwards", money(q.founderValue), "total")}
+      <div style="margin-top:8px"><button class="btn sm" id="do-ipo">Open the offering</button></div>
+    </div>`;
+    } else {
+      ipoBody = `<div class="card tight">
+      <div class="spread"><b>Take the company public</b><span class="pill">Not yet</span></div>
+      <div class="small muted" style="margin:6px 0">${esc(IPO_BLURB)}</div>
+      <div class="small">${ipo.reasons.map((r) => "\u25B2 " + esc(r)).join("<br>")}</div>
+    </div>`;
+    }
+    let reitBody;
+    if (S.reitListed) {
+      reitBody = row("Sponsor stake", pct(S.reitStake || 0.25, 0)) + row("Worth", money(S.reitValue || 0));
+    } else if (reit.ready) {
+      const q = reitQuote(S);
+      reitBody = `${row("Let commercial space", num(Math.round(q.area)) + " sq ft")}
+      ${row("Net operating income", money(q.noi) + " a year")}
+      ${row("Valued at", money(q.grossValue) + " on a " + pct(q.yieldReq) + " yield")}
+      ${row("Cash released for 75%", money(q.raised - q.costs), "total")}
+      <div style="margin-top:8px"><button class="btn sm" id="do-reit">Launch the trust</button></div>`;
+    } else {
+      reitBody = `<div class="small">${reit.reasons.map((r) => "\u25B2 " + esc(r)).join("<br>")}</div>`;
+    }
+    return `<div class="card"><h3>Capital markets</h3>
+    <div class="grid g2">
+      ${ipoBody}
+      <div class="card tight">
+        <div class="spread"><b>List the rental portfolio as a REIT</b><span class="pill ${reit.ready || S.reitListed ? "good" : ""}">${S.reitListed ? "Listed" : reit.ready ? "Ready" : "Not yet"}</span></div>
+        <div class="small muted" style="margin:6px 0">${esc(REIT_BLURB)}</div>
+        ${reitBody}
+      </div>
+    </div>
+  </div>`;
+  }
+  var IPO_BLURB = "A private developer is worth what his assets are worth. A listed one is worth what the market says, and the market pays a multiple of book that runs from under one in a bust to four at a peak. This is how property fortunes are actually made, and unmade.";
+  var REIT_BLURB = "A trust values let offices on contracted income at a yield institutions accept, materially finer than a private buyer pays. Selling the portfolio into one you sponsor releases most of that value as cash while you keep a quarter of it.";
+  function listedSummaryCard(inner) {
+    const mult = marketMultiple(S);
+    const body = `${row("Market capitalisation", money(marketCap(S)))}
+    ${row("Trading at", mult.toFixed(2) + "\xD7 net assets" + (mult < 1 ? " \u2014 below book" : ""))}
+    ${row("Your stake", pct(S.founderStake || 1, 1) + " \u2014 " + money(founderWealth(S)))}
+    ${row("In US dollars", usd(founderWealth(S), S.macro.usd), "total")}
+    ${S.reitListed ? row("REIT sponsor stake", money(S.reitValue || 0)) : ""}
+    <div class="small muted" style="margin-top:8px">The multiple moves with the cycle and with what the market thinks of your
+    governance, your leverage and your recurring income. It is the same mechanism in both directions.</div>`;
+    return inner ? `<div class="card tight"><div class="spread"><b>Listed</b><span class="pill good">Public</span></div>${body}</div>` : `<div class="card"><h3>Listed company</h3>${body}</div>`;
+  }
   function monthlyBurn() {
     const payroll = S.staff.reduce((t, p) => t + p.salary, 0);
     const office = Math.round((3e3 + S.staff.length * 2200) * costIndex(S.month));
@@ -7204,6 +7437,42 @@ Nothing has been notified in the gazette. Nothing has been surveyed. Nothing is 
         render();
       };
     });
+    const ipoBtn = $("#do-ipo");
+    if (ipoBtn) ipoBtn.onclick = () => {
+      const q = ipoQuote(S);
+      confirmModal({
+        title: "Take the company public?",
+        body: `The market is paying ${q.multiple.toFixed(2)} times net assets today, which values the business at ${money(q.postMoney)}. Issuing a quarter of it raises ${money(q.raised)}, of which ${money(q.costs)} goes to bankers and lawyers. Your remaining ${Math.round((1 - q.dilution) * 100)} per cent would be worth ${money(q.founderValue)} on paper.
+
+What you give up is permanent. A quarter of every rupee the firm earns from here belongs to somebody else, you answer to a board and to quarterly results, and the multiple that makes this number large today is the one that takes it below book in the next crash. A public company cannot quietly stop and wait out a bad year the way a private one can.`,
+        confirmLabel: "List the company",
+        onConfirm: () => {
+          const r = goPublic(S);
+          say(r.ok ? `Listed at ${money(r.quote.postMoney)}. Your stake is worth ${money(r.quote.founderValue)}.` : r.msg);
+          refresh(S);
+          persist();
+          render();
+        }
+      });
+    };
+    const reitBtn = $("#do-reit");
+    if (reitBtn) reitBtn.onclick = () => {
+      const q = reitQuote(S);
+      confirmModal({
+        title: "Put the rental portfolio into a REIT?",
+        body: `${(q.area / 1e6).toFixed(2)} million square feet producing ${money(q.noi)} a year, valued at ${money(q.grossValue)} on a ${pct(q.yieldReq)} yield. Selling three quarters of it into the trust releases about ${money(q.raised - q.costs)} after costs, and repays any lease rental discounting secured on those buildings.
+
+You keep a sponsor's quarter and the income that goes with it. What you lose is the assets: the offices you spent years building stop being yours and become units other people trade.`,
+        confirmLabel: "Launch the trust",
+        onConfirm: () => {
+          const r = launchREIT(S);
+          say(r.ok ? `REIT listed. ${money(r.net)} released.` : r.msg);
+          refresh(S);
+          persist();
+          render();
+        }
+      });
+    };
     v.querySelectorAll("[data-lrd]").forEach((b) => {
       b.onclick = () => showLRD(b.dataset.lrd);
     });
@@ -7565,7 +7834,7 @@ Not every introduction closes. Yours close more often the better you know the ma
           const sq = Math.floor(Math.min(site, want));
           if (sq < floor) continue;
           const e = estimateLayout(p, typeId, sq, S);
-          if ((committed + e.schedule.peak) * 0.32 <= S.cash) return sq;
+          if ((committed + e.schedule.peak) * equityRequirement(S) <= S.cash) return sq;
         }
         return Math.floor(Math.min(site, floor));
       }
@@ -7574,7 +7843,7 @@ Not every introduction closes. Yours close more often the better you know the ma
         const sq = Math.min(cap, want);
         if (sq < bt.minSqFt) continue;
         const e = estimateProject(p, typeId, sq, S);
-        if ((committed + e.schedule.peak) * 0.32 <= S.cash) return sq;
+        if ((committed + e.schedule.peak) * equityRequirement(S) <= S.cash) return sq;
       }
       return Math.max(bt.minSqFt, Math.min(cap, 3e3));
     };
@@ -7590,7 +7859,7 @@ Not every introduction closes. Yours close more often the better you know the ma
       const cr = capRate(bt.use, S.month, S);
       const holdValue = holdNoi > 0 ? holdNoi / cr : 0;
       const own = p.devAgreement ? 1 - p.devAgreement.ownerShare : 1;
-      const need = (committed + est.schedule.peak) * 0.32;
+      const need = (committed + est.schedule.peak) * equityRequirement(S);
       const fundable = S.cash >= need;
       $("#estimate").innerHTML = `
       ${row("Buildable now (FAR " + farFor(loc, S.month, S.flags).toFixed(2) + ")", num(cap) + " sq ft")}
@@ -7618,7 +7887,7 @@ Not every introduction closes. Yours close more often the better you know the ma
     const drawLayout = (typeId, grossSqYd) => {
       const lt = LAYOUT_TYPES[typeId];
       const est = estimateLayout(p, typeId, grossSqYd, S);
-      const need = (committed + est.schedule.peak) * 0.32;
+      const need = (committed + est.schedule.peak) * equityRequirement(S);
       const fundable = S.cash >= need;
       const landCost = Math.round((p.allInCost || 0) * (grossSqYd / Math.max(1, p.areaSqYd)));
       const total = est.budget + landCost;
@@ -7896,7 +8165,8 @@ Not every introduction closes. Yours close more often the better you know the ma
   }
   function showEnding() {
     const last = S.yearbook[S.yearbook.length - 1] || {};
-    const nwUsd = S.netWorth / S.macro.usd;
+    const wealth = founderWealth(S);
+    const nwUsd = wealth / S.macro.usd;
     const reasons = {
       time: "March 2020. Twenty-five years and three months.",
       extendedTime: `${dateLabel(S.month)}. ${Math.floor(S.month / 12)} years.`,
@@ -7919,9 +8189,10 @@ Not every introduction closes. Yours close more often the better you know the ma
     <div class="body">
       <div class="grid g2">
         <div class="card tight">
-          ${row("Final net worth", money(S.netWorth), "total")}
-          ${row("In US dollars", usd(S.netWorth, S.macro.usd))}
-          ${row("In 1995 purchasing power", money(S.netWorth / (S.macro.cpiIndex / 100)))}
+          ${row(S.listed ? "Your stake at market" : "Final net worth", money(wealth), "total")}
+          ${S.listed ? row("Company market capitalisation", money(marketCap(S))) : ""}
+          ${row("In US dollars", usd(wealth, S.macro.usd))}
+          ${row("In 1995 purchasing power", money(wealth / (S.macro.cpiIndex / 100)))}
           ${row("Total assets", money(S.bs.assets))}
           ${row("Total debt", money(S.debt))}
           ${row("Compound annual return", S.equityPaidIn > 0 && S.netWorth > 0 ? pct(Math.pow(S.netWorth / S.equityPaidIn, 12 / Math.max(1, S.month)) - 1) : "\u2014")}

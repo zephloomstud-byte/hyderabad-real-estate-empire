@@ -223,8 +223,16 @@ export function makeLandOffer(m, s, rng, opts = {}) {
 
   const isAgri = loc.tags.includes('agri') || loc.tags.includes('far');
   let areaSqYd;
-  if (isAgri) areaSqYd = Math.round(SQYD_PER_ACRE * rng.range(1, opts.big ? 24 : 6));
+  // Township-scale land exists, but only for people who can plausibly buy it. Nobody
+  // brings two hundred acres to a man with one completed building — and until this,
+  // nothing above twenty-four acres was ever offered to anyone, which is why the game
+  // could not produce the kind of developer it named as your competition.
+  const bigLeague = opts.township
+    || (s.stats.projectsDone >= 6 && s.netWorth > 5e8 && s.reputation > 40);
+  if (isAgri && bigLeague) areaSqYd = Math.round(SQYD_PER_ACRE * rng.range(12, opts.township ? 420 : 140));
+  else if (isAgri) areaSqYd = Math.round(SQYD_PER_ACRE * rng.range(1, opts.big ? 24 : 6));
   else if (loc.zone === 'core') areaSqYd = Math.round(rng.range(200, opts.big ? 3000 : 900) / 10) * 10;
+  else if (bigLeague) areaSqYd = Math.round(rng.range(2000, 160000) / 10) * 10;
   else areaSqYd = Math.round(rng.range(300, opts.big ? 12000 : 2400) / 10) * 10;
 
   // Seller motivation drives the discount and, separately, the defect load.
@@ -252,21 +260,59 @@ export function makeLandOffer(m, s, rng, opts = {}) {
   };
 }
 
-/** Development agreement: no land cost, a share of the built area to the owner. */
+/**
+ * Joint development agreement: no land cost, a share of the built area to the owner.
+ *
+ * This is how every large Hyderabad developer actually scaled, and the game was hiding it
+ * behind plot-sized deals. A landowner who hands over fifteen acres does not want money —
+ * he wants flats in the finished building, and he wants them from a builder who will
+ * actually finish it. The land costs nothing, so the entire balance sheet goes into
+ * construction instead of into a sale deed, and a firm can run five schemes on the capital
+ * that would have bought one site outright.
+ *
+ * What it costs is standing. Nobody gives acreage to a man with one completed building,
+ * and a first-timer concedes almost half the project to get any land at all. A builder
+ * with a delivery record is offered more land and keeps more of it — which is the point.
+ * Reputation in this business is not flattery, it is access to land you cannot afford.
+ */
 export function makeDevAgreement(m, s, rng) {
-  const pool = localitiesAt(m).filter((l) => ['core', 'northwest', 'east'].includes(l.zone));
+  const standing = clamp(s.stats.projectsDone / 14, 0, 1) * 0.55
+    + clamp(s.reputation / 85, 0, 1) * 0.45;
+
+  // Established builders get brought farmland for townships. Newcomers get city plots.
+  const zones = standing > 0.45 ? null : ['core', 'northwest', 'east'];
+  const pool = localitiesAt(m).filter((l) => !zones || zones.includes(l.zone));
+  if (!pool.length) return null;
   const loc = rng.pick(pool);
-  const areaSqYd = Math.round(rng.range(400, 2200) / 10) * 10;
-  const ownerShare = rng.range(0.32, 0.48);
+  const isAgri = loc.tags.includes('agri') || loc.tags.includes('far');
+
+  // Area rises steeply with standing: half an acre at the start, townships at the top.
+  const reach = standing * standing;
+  const areaSqYd = isAgri
+    ? Math.round(SQYD_PER_ACRE * rng.range(1.5, 3 + reach * 95))
+    : Math.round(rng.range(400, 1800 + reach * 44000) / 10) * 10;
+
+  // The owner's share is the price of the land, paid in built area rather than rupees.
+  const ownerShare = clamp(
+    rng.range(0.34, 0.50) - standing * 0.15 - (s.flags.cleanBooks ? 0.015 : 0),
+    0.26, 0.52,
+  );
+
   const defects = rollDefects(loc, rng, 0.1);
+  // A refundable deposit, not a purchase. It scales with the land but stays a fraction of
+  // what buying the same acreage would cost.
+  const advance = Math.round(
+    landRate(loc.id, m, s) * areaSqYd * rng.range(0.02, 0.08) / 1000,
+  ) * 1000;
+
   return {
     id: nextId(s, 'O'), kind: 'devagreement', locality: loc.id, localityName: loc.name,
     areaSqYd, ownerShare: Math.round(ownerShare * 100) / 100,
     price: 0, seller: personName(rng),
     createdAt: m, expiresAt: m + rng.int(2, 5),
     defects, known: [], ddDone: 0, ddSpend: 0,
-    advance: Math.round(landRate(loc.id, m, s) * areaSqYd * rng.range(0.04, 0.14) / 1000) * 1000,
-    label: `Development agreement, ${areaSqYd} sq yd at ${loc.name}`,
+    advance,
+    label: `Development agreement, ${areaSqYd >= SQYD_PER_ACRE ? (areaSqYd / SQYD_PER_ACRE).toFixed(2) + ' acres' : areaSqYd + ' sq yd'} at ${loc.name}`,
     desc: loc.desc,
   };
 }

@@ -23,6 +23,8 @@ import { startProject, tickProject, tickPresales, tickInventory, estimateProject
   estimateLayout, isLayout } from './build.js';
 import { tickAsset, assetValue, portfolioNoiAnnual, propertyTax } from './assets.js';
 import { balanceSheet, computeRatios, closeYear, landValue } from './accounting.js';
+import { ipoReadiness, ipoQuote, marketCap, marketMultiple, founderWealth,
+  reitReadiness, reitQuote, IPO_FROM_MONTH, REIT_FROM_MONTH } from './listing.js';
 import { tickIntel, buySurvey, intelLevel, surveyCost, fuzzRate, initialIntel,
   INTEL_NONE, INTEL_HEARSAY, INTEL_KNOWN } from './intel.js';
 
@@ -91,6 +93,8 @@ export function refresh(s) {
   s.debt = bs.debt;
   s.assetValue = bs.assets;
   s.ratios = computeRatios(s, bs);
+  s.marketCap = marketCap(s);
+  s.founderWealth = founderWealth(s);
   s.avgQuality = s.projects.length || s.assets.length
     ? [...s.projects, ...s.assets].reduce((t, x) => t + (x.quality || 0.65), 0) / (s.projects.length + s.assets.length)
     : 0.65;
@@ -350,6 +354,43 @@ export function brokerDeal(s, offerId) {
   return { ok: true, closed: true, fee };
 }
 
+/**
+ * How much of a project's peak cost the firm must have in hand before it may start.
+ *
+ * A man with one completed building genuinely needs about a third: nobody will lend to
+ * him, and buyer advances only arrive once there is something to show. A listed developer
+ * running twenty schemes at different stages needs far less, because the mature projects'
+ * instalments fund the young ones, construction finance is available at the project level,
+ * and the rent roll services itself. That difference is precisely how a small builder
+ * becomes a large one — and, when the cycle turns on an over-committed book, precisely how
+ * a large one stops existing.
+ *
+ * Holding this at a third regardless of size was the single biggest reason the simulation
+ * could not produce a developer of the scale it named as your competition: it refused
+ * thirty-four project launches for every one it allowed.
+ */
+export function equityRequirement(s) {
+  const track = clamp(s.stats.projectsDone / 30, 0, 1);
+  const standing = clamp(s.reputation / 100, 0, 1);
+  const banked = clamp(s.relations.banks / 100, 0, 1);
+  const organisation = clamp(s.staff.length / 12, 0, 1);
+  // Contracted rent covering a slice of the commitment is the strongest argument of all.
+  const recurring = clamp((s.ratios.noi * 6) / Math.max(1, remainingCommitments(s) || 1), 0, 1);
+
+  const capability = clamp(
+    track * 0.32 + standing * 0.18 + banked * 0.16 + organisation * 0.12
+    + recurring * 0.14 + (s.flags.cleanBooks ? 0.06 : 0) + (s.listed ? 0.10 : 0),
+    0, 1,
+  );
+  // The credit cycle is scaled by capability on purpose. A beginner's terms are already
+  // as bad as terms get — charging him more in a squeeze just stops him ever starting,
+  // and he never builds the record that would improve them. It is the firm that has
+  // earned easier terms that has something to lose when the market tightens.
+  const cycle = clamp((0.6 - s.macro.credit) * 0.14, -0.04, 0.07) * capability;
+  const trouble = (s.flags.npa ? 0.06 : 0) + (s.flags.underInvestigation ? 0.05 : 0);
+  return clamp(0.32 - capability * 0.21 + cycle + trouble, 0.11, 0.36);
+}
+
 export function launchProject(s, parcelId, typeId, sqFt, mode, name) {
   const parcel = s.parcels.find((p) => p.id === parcelId);
   if (!parcel || parcel.consumed || freeSqYd(parcel) < 100) return { ok: false, msg: 'There is no land left on that parcel.' };
@@ -374,18 +415,17 @@ export function launchProject(s, parcelId, typeId, sqFt, mode, name) {
   // across everything you already have running. Buyer advances cover the rest, if the
   // market cooperates. If it does not, the site simply stops.
   const committed = remainingCommitments(s);
-  // Rule of thumb the trade actually used: put up roughly a third of the build cost and
-  // fund the rest from buyer advances and borrowing. That is genuinely how Indian
-  // residential development was financed — the buyers were the lender — and it is why
-  // a builder with twenty-five lakh could run a project costing three times that.
-  // Below a third you are not a developer, you are a man with a hole in the ground.
-  const need = (committed + est.schedule.peak) * 0.32;
+  // Indian residential development was financed by its buyers. What share you must find
+  // yourself depends on how much of an organisation stands behind you — see
+  // equityRequirement.
+  const share = equityRequirement(s);
+  const need = (committed + est.schedule.peak) * share;
   if (s.cash < need) {
     return {
       ok: false,
       msg: `You cannot fund this. Total build cost ${money(est.budget)} over ${est.approvalMonths + est.months} months`
         + (committed > 0 ? `, on top of ${money(committed)} still to spend on projects already running` : '')
-        + `. You should have roughly a third of that in hand — about ${money(need)} — and you have ${money(s.cash)}. `
+        + `. A firm of your standing should have about ${Math.round(share * 100)} per cent of that in hand — ${money(need)} — and you have ${money(s.cash)}. `
         + `Build smaller, sell something, or raise money first.`,
     };
   }
@@ -466,6 +506,77 @@ export function continuePast2020(s) {
     });
   refresh(s);
   return { ok: true, horizon: next };
+}
+
+/**
+ * Take the company public.
+ *
+ * Primary capital comes in, a quarter of the company goes out, and from this month the
+ * firm is worth what the market says rather than what its assets cost. That multiple is
+ * the making of most property fortunes and the unmaking of a good few.
+ */
+export function goPublic(s, dilution = 0.25) {
+  const r = ipoReadiness(s);
+  if (!r.ready) return { ok: false, msg: r.reasons[0], reasons: r.reasons };
+  const q = ipoQuote(s, dilution);
+
+  s.listed = true;
+  s.listedAt = s.month;
+  s.founderStake = (s.founderStake ?? 1) * (1 - q.dilution);
+  s.cash += q.raised - q.costs;
+  s.equityPaidIn += q.raised - q.costs;
+  s.flags.cleanBooks = true;
+  s.flags.listedCompany = true;
+  s.relations.investors = clamp(s.relations.investors + 25, 0, 100);
+  s.relations.banks = clamp(s.relations.banks + 15, 0, 100);
+  s.relations.journalists = clamp(s.relations.journalists + 12, 0, 100);
+  s.reputation = clamp(s.reputation + 8, 0, 100);
+  if (!s.staff.some((x) => x.role === 'cfo')) hire(s, 'cfo');
+
+  s.ledger.push({ m: s.month, type: 'Initial public offering', amount: Math.round(q.raised - q.costs), note: `${Math.round(q.dilution * 100)}% of the company` });
+  s.news.push({
+    m: s.month, tag: 'FINANCE', major: true,
+    head: `${s.founder.firmName || 'The company'} lists at a market value of ${money(q.postMoney)}`,
+    body: `${money(q.raised)} raised by issuing ${Math.round(q.dilution * 100)} per cent of the company, ${money(q.costs)} of it eaten by bankers and lawyers. `
+      + `The market has put ${q.multiple.toFixed(2)} times net assets on the business — it pays for delivery, for recurring income and for accounts it believes, and it will stop paying for any of them the moment the cycle turns. `
+      + `Your ${Math.round(s.founderStake * 100)} per cent is worth ${money(q.founderValue)} on paper today.
+
+`
+      + `You now answer to a board, to quarterly results and to anyone who buys a hundred shares. The firm cannot quietly stop and wait out a bad year any more.`,
+  });
+  return { ok: true, quote: q };
+}
+
+/** Sell the rental portfolio into a trust you sponsor, and keep a quarter of it. */
+export function launchREIT(s) {
+  const q = reitQuote(s);
+  if (!q.ready) return { ok: false, msg: q.reasons[0], reasons: q.reasons };
+
+  const ids = new Set(q.leased.map((a) => a.id));
+  for (const l of s.loans) if (l.assetId && ids.has(l.assetId)) l.outstanding = Math.max(0, l.outstanding);
+  // Facilities secured on the transferred assets are repaid out of the proceeds.
+  let repaid = 0;
+  for (const l of [...s.loans]) {
+    if (l.assetId && ids.has(l.assetId)) { repaid += l.outstanding; s.loans = s.loans.filter((x) => x.id !== l.id); }
+  }
+  s.assets = s.assets.filter((a) => !ids.has(a.id));
+  const net = q.raised - q.costs - repaid;
+  s.cash += net;
+  s.reitListed = true;
+  s.reitStake = q.sponsorStake;
+  s.reitValue = q.grossValue * q.sponsorStake;
+  s.relations.investors = clamp(s.relations.investors + 20, 0, 100);
+  s.reputation = clamp(s.reputation + 6, 0, 100);
+
+  s.ledger.push({ m: s.month, type: 'REIT monetisation', amount: Math.round(net), note: `${(q.area / 1e6).toFixed(2)}m sq ft at a ${(q.yieldReq * 100).toFixed(1)}% yield` });
+  s.news.push({
+    m: s.month, tag: 'FINANCE', major: true,
+    head: `Rental portfolio listed as a REIT at ${money(q.grossValue)}`,
+    body: `${(q.area / 1e6).toFixed(2)} million square feet producing ${money(q.noi)} a year, valued at a ${(q.yieldReq * 100).toFixed(1)} per cent yield — considerably finer than a private buyer would pay, because the units trade and the income is contracted. `
+      + `${money(net)} released after repaying ${money(repaid)} of lease rental discounting and ${money(q.costs)} of issue costs. You keep a sponsor's ${Math.round(q.sponsorStake * 100)} per cent. `
+      + `Twenty-five years of building offices has just turned into capital you can deploy again.`,
+  });
+  return { ok: true, quote: q, net, repaid };
 }
 
 export function repayLoan(s, loanId, amount) {
@@ -1135,7 +1246,8 @@ function refreshOffers(s, rng) {
   while (s.offers.length < target && guard++ < 12) {
     const kind = rng.weighted([
       ['land', 6],
-      ['dev', s.month > 6 ? 2 : 0.5],
+      // Landowners seek out builders who deliver; this is reputation's real payoff.
+      ['dev', s.month > 6 ? 2 + clamp(s.reputation / 20, 0, 5) + clamp(s.stats.projectsDone / 4, 0, 3) : 0.5],
       ['asset', s.month > 36 && s.netWorth > 5e6 ? 1.6 : 0],
     ]);
     let o = null;
@@ -1292,6 +1404,15 @@ export function advanceMonth(s) {
   const relief = s.staff.filter((p) => ROLES[p.role]?.exec).length * 6 + (s.staff.length > 4 ? 3 : 0);
   s.stress = clamp(s.stress + load * 1.1 - relief - 2 + (s.cash < 0 ? 5 : 0), 0, 100);
   s.reputation = clamp(s.reputation + (s.stats.projectsDone > 0 ? 0.16 : 0.02) + (s.ratios.occupancy > 0.8 ? 0.08 : 0) - (s.flags.npa ? 0.25 : 0) - (s.payables > 0 ? 0.1 : 0), 0, 100);
+  // A delivery record is sticky. Without this a prolific builder could be pinned at zero
+  // standing forever by the steady drain from slow sites, because handing over a building
+  // paid three points once while every stalled site took two every six months. Twenty-one
+  // delivered projects should not leave a man with the reputation of a first-timer: the
+  // flats exist, the families live in them, and the market remembers. Trouble dents this
+  // floor rather than erasing it, and fraud or default cuts it down hard.
+  const earned = clamp(Math.sqrt(s.stats.projectsDone) * 9, 0, 55);
+  const floor = (s.flags.underInvestigation || s.flags.npa) ? earned * 0.4 : earned;
+  if (s.reputation < floor) s.reputation = floor;
 
   // 8b. Regularisation applications grind on, and what you know changes.
   tickRegularisations(s, rng);
@@ -1360,6 +1481,8 @@ function checkEnd(s) {
 
 export {
   compactState,
+  ipoReadiness, ipoQuote, marketCap, marketMultiple, founderWealth,
+  reitReadiness, reitQuote, IPO_FROM_MONTH, REIT_FROM_MONTH,
   END_MONTH, EXTENDED_END_MONTH, horizonOf, nextHorizon, HORIZONS,
   findDuplicateIds, repairDuplicateIds, reseedIds,
   abandonProject, remainingCommitments, fundingSchedule, freeSqYd, landConsumedBy,
